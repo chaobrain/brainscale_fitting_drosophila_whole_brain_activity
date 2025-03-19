@@ -24,7 +24,13 @@ import time
 from pathlib import Path
 from typing import Callable
 
-if platform.platform() in ['Linux-6.8.0-48-generic-x86_64-with-glibc2.35']:
+from tqdm import tqdm
+
+if platform.platform() in [
+    'Linux-6.8.0-48-generic-x86_64-with-glibc2.35',
+    'Linux-5.15.0-131-generic-x86_64-with-glibc2.31',
+    'Linux-5.15.0-84-generic-x86_64-with-glibc2.31',
+]:
     import matplotlib
 
     matplotlib.use('Agg')
@@ -33,6 +39,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 os.environ['JAX_TRACEBACK_FILTERING'] = 'off'
 os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '.99'
 sys.path.append('/mnt/d/codes/projects/brainscale')
@@ -362,7 +369,7 @@ class NeuralActivity(brainstate.nn.Module):
 
         # neural activity data
         data = np.load(f'./data/spike_rates/ito_{neural_activity_id}_spike_rate.npz')
-        self.spike_rates = u.math.asarray(data['rates'][1:] * neural_activity_max_fr).T
+        self.spike_rates = u.math.asarray(data['rates'][1:] * neural_activity_max_fr).T  # [time, neuropil]
 
         print('Maximum firing rate:', self.spike_rates.max())
         self.neuropils = data['areas'][1:]
@@ -580,8 +587,10 @@ class FiringRateNetwork(brainstate.nn.Module):
             conn_param_type=conn_param_type,
         )
 
-    def count_neuropil_fr(self):
-        neuron_fr = self.pop.spike_count.value / (self.n_sample_step * brainstate.environ.get_dt())
+    def count_neuropil_fr(self, length: int = None):
+        if length is None:
+            length = self.n_sample_step
+        neuron_fr = self.pop.spike_count.value / (length * brainstate.environ.get_dt())
         neuron_fr = neuron_fr.to(u.Hz)
         fun = self.neural_activity.neuron_to_neurpil_fr
         for i in range(neuron_fr.ndim - 1):
@@ -598,18 +607,16 @@ class FiringRateNetwork(brainstate.nn.Module):
             spk = self.interaction.update()
             return spk
 
-    def simulate(self, neuropil_fr, t0=0 * u.ms, t1=1e3 * u.ms):
+    @brainstate.compile.jit(static_argnums=0)
+    def simulate(self, neuropil_fr, indices):
         def step_run(i):
             self.update(i, neuropil_fr)
 
         self.pop.reset_spk_count()
         dt = brainstate.environ.get_dt()
-        brainstate.compile.for_loop(
-            step_run,
-            np.arange(int(t0 / dt), int(t1 / dt)),
-            pbar=100
-        )
-        frs = self.count_neuropil_fr()
+        # brainstate.compile.for_loop(step_run, indices, pbar=400)
+        brainstate.compile.for_loop(step_run, indices)
+        frs = self.count_neuropil_fr(indices.shape[0])
         return frs
 
 
@@ -742,10 +749,10 @@ class Trainer:
         # target_neuropil_fr: [n_batch, n_neuropil]
         n_batch = last_neuropil_fr.shape[0]
         # model
-        if self.etrace_decay is not None:
-            model = brainscale.IODimVjpAlgorithm(self.target, self.etrace_decay, vjp_method='single-step')
-        else:
+        if self.etrace_decay is None or self.etrace_decay == 0.:
             model = brainscale.ParamDimVjpAlgorithm(self.target, vjp_method='single-step')
+        else:
+            model = brainscale.IODimVjpAlgorithm(self.target, self.etrace_decay, vjp_method='single-step')
 
         brainstate.nn.vmap_init_all_states(self.target, axis_size=batch_size, state_tag='hidden')
 
@@ -780,9 +787,9 @@ class Trainer:
         # training
         def loss_fn(i):
             spk = model(i, last_neuropil_fr)
-            current_neuropil_fr = self.target.count_neuropil_fr()
-            loss = self.get_loss(current_neuropil_fr, target_neuropil_fr).mean()
-            return u.get_mantissa(loss), current_neuropil_fr
+            current_neuropil_fr = self.target.count_neuropil_fr(self.target.n_sample_step - n_sim)
+            loss_ = self.get_loss(current_neuropil_fr, target_neuropil_fr).mean()
+            return u.get_mantissa(loss_), current_neuropil_fr
 
         grads, loss, neuropil_fr = brainstate.augment.grad(
             loss_fn, self.trainable_weights, return_value=True, has_aux=True
@@ -807,7 +814,7 @@ class Trainer:
                     target_neuropil_fr[i].to_decimal(u.Hz),
                     title='True FR',
                     xticks=xticks)
-        plt.savefig(f'{self.filepath}/neuropil_fr-at-epoch-{i_epoch}-batch-{i_batch}.png')
+        plt.savefig(f'{self.filepath}/images/neuropil_fr-at-epoch-{i_epoch}-batch-{i_batch}.png')
         plt.close()
 
     def f_train(self, train_epoch: int, batch_size: int = 128):
@@ -845,8 +852,7 @@ class Trainer:
 
                     i_batch += 1
                     all_loss.append(loss)
-                    self.show_res(neuropil_fr, target_neuropil_fr, i_epoch, i_batch)
-
+                self.show_res(neuropil_fr, target_neuropil_fr, i_epoch, '')
                 self.opt.lr.step_epoch()
 
                 # save checkpoint
@@ -868,29 +874,31 @@ def example_to_train():
     neural_activity_id = '2017-10-26_1'
     # neural_activity_id = '2018-12-14_3'
     flywire_version = '630'
-    input_method = 'relu'
+
+    lr, etrace_decay, scale_factor = 1e-1, 0., 0.0825 / 100 * u.mV
+    lr, etrace_decay, scale_factor = 1e-2, 0.95, 0.0825 / 100 * u.mV
+    lr, etrace_decay, scale_factor = 1e-2, 0.99, 0.0825 / 100 * u.mV
+    lr, etrace_decay, scale_factor = 1e-3, 0.99, 0.0825 / 100 * u.mV
+    lr, etrace_decay, scale_factor = 1e-1, 0., 0.0825 / 10 * u.mV
 
     brainstate.environ.set(dt=0.2 * u.ms)
     trainer = Trainer(
-        lr=1e-1,
+        lr=lr,
         # lr=brainstate.optim.StepLR(5e0, step_size=8, gamma=0.9),
         # lr=brainstate.optim.StepLR(1e-1, step_size=5, gamma=0.9),
-        # etrace_decay=0.99,
-        etrace_decay=None,
+        etrace_decay=etrace_decay,
         sim_before_train=0.1,
         neural_activity_id=neural_activity_id,
         flywire_version=flywire_version,
         max_firing_rate=100.0 * u.Hz,
         loss_fn='mse',
-        scale_factor=0.0825 / 100 * u.mV,
+        scale_factor=scale_factor,
 
-        conn_param_type=brainscale.ETraceParam,
-        input_param_type=brainscale.ETraceParam,
-
-        # conn_param_type=brainscale.NonTempParam,
-        # input_param_type=brainscale.NonTempParam,
+        conn_param_type=brainscale.ETraceParam if etrace_decay != 0. else brainscale.NonTempParam,
+        input_param_type=brainscale.ETraceParam if etrace_decay != 0. else brainscale.NonTempParam,
     )
-    trainer.f_train(100, batch_size=96)
+    # trainer.f_train(100, batch_size=96)
+    trainer.f_train(100, batch_size=128)
 
 
 def example_to_simulate():
@@ -925,21 +933,20 @@ def example_to_simulate():
 
 
 def example_to_load():
-    import matplotlib.pyplot as plt
     brainstate.environ.set(dt=0.2 * u.ms)
 
-    filepath = 'results/v3/630#2017-10-26_1#relu#100.0Hz#0.99#mse#0.7#NonTempParam#ParamState#ParamState#2025-03-16-13-39-22'
-    filepath = 'results/v3/630#2017-10-26_1#100.0Hz#0.99#mse#0.7#NonTempParam#NonTempParam#ParamState#20#2025-03-16-17-45-09'
+    filepath = 'results/v3/630#2017-10-26_1#100.0Hz#None#mse#NonTempParam#NonTempParam#0.000825#20#0.1#2025-03-17-12-38-29'
     setting = filepath.split('/')[2].split('#')
     flywire_version = setting[0]
     neural_activity_id = setting[1]
     max_firing_rate = float(setting[2].split('Hz')[0]) * u.Hz
-    etrace_decay = float(setting[3])
+    etrace_decay = eval(setting[3])
     loss_fn = setting[4]
     conn_param_type = setting[5]
     input_param_type = setting[6]
-    scale_param_type = setting[7]
+    scale_factor = float(setting[7])
     n_rank = int(setting[8])
+    sim_before_train = float(setting[9])
 
     net = FiringRateNetwork(
         flywire_version=flywire_version,
@@ -948,6 +955,7 @@ def example_to_load():
         conn_param_type=brainscale.NonTempParam if conn_param_type == 'NonTempParam' else brainscale.ETraceParam,
         input_param_type=brainscale.NonTempParam if input_param_type == 'NonTempParam' else brainscale.ETraceParam,
         n_rank=n_rank,
+        scale_factor=scale_factor * u.mV,
     )
     brainstate.nn.init_all_states(net)
     braintools.file.msgpack_load(
@@ -955,28 +963,47 @@ def example_to_load():
         net.states(brainstate.ParamState),
     )
 
-    neuropil_fr = net.neural_activity.read_neuropil_fr(0)
+    n_time = 100
+    n_time = net.neural_activity.n_time
+    n_sim = int(sim_before_train * net.n_sample_step)
     t0 = 0.0 * u.ms
-    t1 = 1e3 * u.ms
-
-    for _ in range(10):
-        # spks, fr = net.simulate(net.neural_activity.neuropil_to_neuron_fr(fr), t0, t0 + t1)
-        spks, neuropil_fr = net.simulate(neuropil_fr, t0, t0 + t1)
-        fig, gs = braintools.visualize.get_figure(4, 1, 2, 6.0)
-        fig.add_subplot(gs[:3, 0])
-        i_times, i_indices = np.where(spks)
-        plt.scatter(i_times * brainstate.environ.get_dt() + t0, i_indices)
-        plt.xlim(t0, t0 + t1)
-        plt.ylim(0, spks.shape[1])
-        fig.add_subplot(gs[3, 0])
-        times = np.arange(neuropil_fr.shape[0]) * brainstate.environ.get_dt() + t0
-        plt.plot(times, neuropil_fr)
-        plt.xlim(t0, t0 + t1)
-        plt.show()
+    t1 = net.n_sample_step * brainstate.environ.get_dt()
+    simulated_neuropil_fr = []
+    indices = np.arange(net.n_sample_step)
+    # neuropil_fr = net.neural_activity.read_neuropil_fr(0)
+    for i in tqdm(range(n_time)):
+        # if i < 10:
+        neuropil_fr = net.neural_activity.read_neuropil_fr(i)
+        indices += i * net.n_sample_step
+        net.simulate(neuropil_fr, indices[:n_sim])
+        neuropil_fr = net.simulate(neuropil_fr, indices[n_sim:])
+        simulated_neuropil_fr.append(neuropil_fr.to_decimal(u.Hz))
         t0 += t1
-        neuropil_fr = neuropil_fr[-1]
+    simulated_neuropil_fr = np.asarray(simulated_neuropil_fr)  # [n_time, n_neuropil]
+    np.save(os.path.join(filepath, 'simulated_neuropil_fr'), simulated_neuropil_fr)
+
+    import matplotlib.pyplot as plt
+    experimental_neuropil_fr = np.asarray(net.neural_activity.spike_rates / u.Hz)  # [n_time, n_neuropil]
+    times = np.arange(simulated_neuropil_fr.shape[0]) * t1
+    num = 5
+    for ii in range(0, net.neural_activity.n_neuropil, num):
+        fig, gs = braintools.visualize.get_figure(num, 2, 4, 8.0)
+        for i in range(num):
+            # plot simulated neuropil firing rate data
+            fig.add_subplot(gs[i, 0])
+            data = simulated_neuropil_fr[:, i + ii]
+            plt.plot(times, data)
+            plt.ylim(0., data.max() * 1.05)
+            # plot experimental neuropil firing rate data
+            fig.add_subplot(gs[i, 1])
+            data = experimental_neuropil_fr[:n_time, i + ii]
+            plt.plot(times, data)
+            plt.ylim(0., data.max() * 1.05)
+        plt.show()
 
 
 if __name__ == '__main__':
+    pass
     example_to_train()
     # example_to_simulate()
+    # example_to_load()

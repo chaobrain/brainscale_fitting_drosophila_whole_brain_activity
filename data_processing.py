@@ -22,8 +22,8 @@ import brainunit as u
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from joblib import Parallel, delayed
 import seaborn as sns
+from joblib import Parallel, delayed
 
 from utils import deconvolve_dff_to_spikes, filter_region_response, trim_region_response
 
@@ -189,6 +189,38 @@ def visualize_spike_rate():
         plt.show()
 
 
+def visualize_dff_fr():
+    data = np.load('./data/spike_rates/ito_2017-10-26_1_spike_rate.npz')
+    dff = data['dff']
+    rates = data['rates']
+
+    num = 40
+    fig, gs = braintools.visualize.get_figure(1, 2, 8, 5)
+    fig.add_subplot(gs[0, 0])
+    xpos = np.arange(num) / 3
+    times = np.arange(dff.shape[1]) * 1 / 1.2
+
+    for i in range(num):
+        plt.plot(times, dff[i] + xpos[i])
+    plt.xlim(0, 1600)
+    plt.ylim(-0.5, xpos[-1] + 0.5)
+    plt.yticks(xpos, data['areas'][:num])
+    plt.xlabel('Time [s]')
+
+    fig.add_subplot(gs[0, 1])
+    for i in range(num):
+        plt.plot(times, rates[i] * 6 + xpos[i])
+    plt.xlim(0, 1600)
+    plt.ylim(-0.5, xpos[-1] + 0.5)
+    plt.yticks([])
+    plt.xlabel('Time [s]')
+
+    sns.despine()
+
+    plt.savefig('dff-firing-rate.svg', transparent=True, dpi=500)
+    plt.show()
+
+
 def visualize_correlation():
     data = np.load('./data/spike_rates/ito_2017-10-26_1_spike_rate.npz')
 
@@ -210,13 +242,13 @@ def visualize_correlation():
     plt.show()
 
 
-
 if __name__ == '__main__':
     pass
     # compute_experimental_fc('./data/neural_activity/ito_2017-10-26_1.npz')
 
     # convert_calcium_to_spike_rate()
-    visualize_spike_rate()
+    # visualize_spike_rate()
+    visualize_dff_fr()
     # visualize_correlation()
 
     # obtain_atalas_syn_count('783')
