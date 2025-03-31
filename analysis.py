@@ -16,12 +16,45 @@
 # -*- coding: utf-8 -*-
 
 
+import re
+
 import braintools
 import jax
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn
 import seaborn as sns
+
+
+def _extract_epoch_loss(file_path):
+    # Read the file content
+    with open(file_path, 'r') as file:
+        content = file.read()
+
+    # Pattern to match "epoch = X, loss = Y" lines
+    pattern = r"epoch = (\d+), loss = ([\d\.]+), lr"
+
+    # Find all matches
+    matches = re.findall(pattern, content)
+
+    # Convert to list of tuples (epoch, loss)
+    results = [(int(epoch), float(loss)) for epoch, loss in matches]
+
+    return results
+
+
+def extract_epoch_loss():
+    file_path = 'results/v3/630#2017-10-26_1#100.0Hz#0.99#mse#ETraceParam#ETraceParam#0.000825#20#0.1#2025-03-18-21-02-47/losses.txt'
+    epoch_loss_data = _extract_epoch_loss(file_path)
+
+    fig, gs = braintools.visualize.get_figure(1, 1, 8, 5)
+    fig.add_subplot(gs[0, 0])
+    epochs, losses = zip(*epoch_loss_data)
+    plt.plot(epochs[1:], losses[1:])
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training Loss')
+    plt.show()
 
 
 def visualize_dff_fr():
@@ -171,6 +204,7 @@ def compare_correlation_of_correlation_matrix():
 
 
 if __name__ == '__main__':
+    extract_epoch_loss()
     # visualize_dff_fr()
-    compare_area_correlation()
+    # compare_area_correlation()
     # compare_correlation_of_correlation_matrix()

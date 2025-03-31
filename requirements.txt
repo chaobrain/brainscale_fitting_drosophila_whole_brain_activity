@@ -12,3 +12,6 @@ optax
 jax
 numpy
 scipy
+numba
+warp-lang
+msgpack

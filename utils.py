@@ -419,3 +419,10 @@ def barplot(neuropil_names, neuropil_fr, title='', xticks=True):
         plt.title(title)
 
 
+def output(file, msg: str):
+    print(msg)
+    file.write(msg + '\n')
+    file.flush()
+
+
+
