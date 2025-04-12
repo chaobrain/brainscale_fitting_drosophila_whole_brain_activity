@@ -203,8 +203,38 @@ def compare_correlation_of_correlation_matrix():
     plt.show()
 
 
+def plot_firing_rate_distribution():
+    data = np.load('./data/spike_rates/ito_2017-10-26_1_spike_rate.npz')
+    dff = data['dff'][1:]
+    rates = data['rates'][1:]
+
+    plt.hist(rates.flatten() * 100, bins=100)
+    plt.xlabel('Firing Rate')
+    plt.ylabel('Frequency')
+    plt.title('Firing Rate Distribution')
+    plt.show()
+
+    # # Plot the histogram in log space
+    # plt.hist(rates.flatten() * 100, bins=100, log=True)
+    # plt.xlabel('Firing Rate')
+    # plt.ylabel('Frequency (log scale)')
+    # plt.title('Firing Rate Distribution in Log Space')
+    # plt.show()
+
+    # # Remove zero values to avoid log(0)
+    # non_zero_rates = rates[rates > 0].flatten() * 100
+    # log_rates = np.log10(non_zero_rates)
+    # plt.hist(log_rates, bins=100)
+    # plt.xlabel('Firing Rate (log10 scale)')
+    # plt.ylabel('Frequency (log scale)')
+    # plt.title('Firing Rate Distribution in Log Space (Both X and Y)')
+    # plt.show()
+
+
 if __name__ == '__main__':
-    extract_epoch_loss()
+    pass
+    # extract_epoch_loss()
     # visualize_dff_fr()
     # compare_area_correlation()
     # compare_correlation_of_correlation_matrix()
+    plot_firing_rate_distribution()

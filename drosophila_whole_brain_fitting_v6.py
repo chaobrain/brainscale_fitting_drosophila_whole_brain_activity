@@ -42,7 +42,7 @@ if platform.platform() in [
     'Linux-6.8.0-48-generic-x86_64-with-glibc2.35',
     'Linux-5.15.0-131-generic-x86_64-with-glibc2.31',
     'Linux-5.15.0-84-generic-x86_64-with-glibc2.31',
-    'Linux-6.8.0-52-generic-x86_64-with-glibc2.35', # brainpy tower 1
+    'Linux-6.8.0-52-generic-x86_64-with-glibc2.35',  # brainpy tower 1
     'Linux-6.2.0-37-generic-x86_64-with-glibc2.35',  # 智星云 V100
     'Linux-6.8.0-31-generic-x86_64-with-glibc2.39',  # 智星云 3090
 ]:
@@ -1028,6 +1028,7 @@ class Trainer:
                     )
                     min_loss = loss
 
+
 def parse_setting(fn: str):
     settings = fn.split('/')[2].split('#')
     flywire_version = settings[0]
@@ -1044,7 +1045,6 @@ def parse_setting(fn: str):
     n_hist = int(settings[11])
     bin_size = float(settings[12]) * u.Hz
     return locals()
-
 
 
 def first_round_train():

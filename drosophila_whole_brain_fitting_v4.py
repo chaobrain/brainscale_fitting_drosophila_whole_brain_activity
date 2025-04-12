@@ -38,10 +38,8 @@ from typing import Callable
 
 from tqdm import tqdm
 
-if platform.platform() in [
-    'Linux-6.8.0-48-generic-x86_64-with-glibc2.35',
-    'Linux-5.15.0-131-generic-x86_64-with-glibc2.31',
-    'Linux-5.15.0-84-generic-x86_64-with-glibc2.31',
+if platform.system() == 'Linux' and platform.platform() not in [
+    'Linux-5.15.167.4-microsoft-standard-WSL2-x86_64-with-glibc2.35'
 ]:
     import matplotlib
 
@@ -55,6 +53,7 @@ os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '.99'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 os.environ['JAX_TRACEBACK_FILTERING'] = 'off'
 sys.path.append('/mnt/d/codes/projects/brainscale')
+sys.path.append('/mnt/d/codes/projects/brainevent')
 
 import brainevent
 import brainstate
@@ -459,6 +458,19 @@ class NeuralActivity(brainstate.nn.Module):
             refractory=refractory,
         )
 
+    def update_test(self, noise_weight):
+        # excite neurons
+        refractory = self.pop.get_refractory()
+
+        # excitation
+        brainstate.nn.poisson_input(
+            freq=20 * u.Hz,
+            num_input=1,
+            weight=noise_weight,
+            target=self.pop.v,
+            refractory=refractory,
+        )
+
     @property
     def n_neuropil(self) -> int:
         return self.spike_rates.shape[1]
@@ -508,7 +520,7 @@ class NeuralActivity(brainstate.nn.Module):
         if neuropil_fr.ndim == 1:
             return convert(neuropil_fr)
         elif neuropil_fr.ndim == 2:
-            return jax.vmap(convert)(neuropil_fr)
+            return brainstate.augment.vmap(convert)(neuropil_fr)
         else:
             raise ValueError
 
@@ -677,20 +689,30 @@ class FiringRateNetwork(brainstate.nn.Module):
         neuropil_fr = fun(neuron_fr)
         return neuropil_fr
 
-    def update(self, i, last_neuropil_fr: u.Quantity):
+    def update(self, i, embedding: u.Quantity):
         with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt()):
             # give inputs
-            self.neural_activity.update(last_neuropil_fr)
+            self.neural_activity.update(embedding)
+
+            # update network
+            spk = self.interaction.update()
+            return spk
+
+    def update_test(self, i, noise_weight):
+        with brainstate.environ.context(i=i, t=i * brainstate.environ.get_dt()):
+            # give inputs
+            self.neural_activity.update_test(noise_weight)
 
             # update network
             spk = self.interaction.update()
             return spk
 
     @brainstate.compile.jit(static_argnums=0)
-    def simulate(self, neuropil_fr, indices):
+    def simulate(self, inp_embedding, indices):
         def step_run(i):
-            self.update(i, neuropil_fr)
+            self.update_test(i, noise_weight)
 
+        noise_weight = self.neural_activity.neuropil2neuron(inp_embedding)
         self.pop.reset_spk_count()
         brainstate.compile.for_loop(step_run, indices)
         frs = self.count_neuropil_fr(indices.shape[0])
@@ -1083,6 +1105,7 @@ def example_to_load():
 
     filepath = 'results/v4/630#2017-10-26_1#100.0Hz#None#mse#NonTempParam#NonTempParam#0.000825#20#0.1#2025-03-17-12-38-29'
     filepath = 'results/v4/630#2017-10-26_1#100.0Hz#0.99#mse#ETraceParam#ETraceParam#0.000825#20#0.1#2025-03-18-21-02-47'
+    filepath = 'results/v4/630#2017-10-26_1#100.0Hz#0.99#mse#ETraceParam#ETraceParam#0.000825#20#0.1#2025#10#0.5#2025-03-25-18-21-49/best-checkpoint.msgpack'
     setting = filepath.split('/')[2].split('#')
     flywire_version = setting[0]
     neural_activity_id = setting[1]
@@ -1091,9 +1114,12 @@ def example_to_load():
     loss_fn = setting[4]
     conn_param_type = setting[5]
     input_param_type = setting[6]
-    scale_factor = float(setting[7])
+    scale_factor = float(setting[7]) * u.mV
     n_rank = int(setting[8])
     sim_before_train = float(setting[9])
+    seed = int(setting[10])
+    n_embed = int(setting[11])
+    bin_size = float(setting[12]) * u.Hz
 
     net = FiringRateNetwork(
         flywire_version=flywire_version,
@@ -1102,32 +1128,43 @@ def example_to_load():
         conn_param_type=getattr(brainscale, conn_param_type),
         input_param_type=getattr(brainscale, input_param_type),
         n_rank=n_rank,
-        scale_factor=scale_factor * u.mV,
+        scale_factor=scale_factor,
+        seed=seed,
+        n_embed=n_embed,
+        bin_size=bin_size,
     )
     brainstate.nn.init_all_states(net)
-    braintools.file.msgpack_load(
-        os.path.join(filepath, 'best-checkpoint.msgpack'),
-        net.states(brainstate.ParamState),
-    )
+    braintools.file.msgpack_load(filepath, net.states(brainstate.ParamState))
 
-    n_time = 100
+    n_time = 200
     # n_time = net.neural_activity.n_time
     n_sim = int(sim_before_train * net.n_sample_step)
-    t0 = 0.0 * u.ms
     t1 = net.n_sample_step * brainstate.environ.get_dt()
     simulated_neuropil_fr = []
     indices = np.arange(net.n_sample_step)
-    # neuropil_fr = net.neural_activity.read_neuropil_fr(0)
-    for i in tqdm(range(n_time)):
-        if i < 10:
+    bar = tqdm(total=n_time)
+    accs = []
+    for i in range(n_time):
+        # brainstate.nn.reset_all_states(net)
+        if i < 100:
             neuropil_fr = net.neural_activity.read_neuropil_fr(i)
-        indices += i * net.n_sample_step
-        net.simulate(neuropil_fr, indices[:n_sim])
-        neuropil_fr = net.simulate(neuropil_fr, indices[n_sim:])
+        input_embed = net.neural_activity.neuropil_fr_to_embedding(neuropil_fr)
+        net.simulate(input_embed, indices[:n_sim])
+        neuropil_fr = net.simulate(input_embed, indices[n_sim:])
         simulated_neuropil_fr.append(neuropil_fr.to_decimal(u.Hz))
-        t0 += t1
+        indices += net.n_sample_step
+        target_neuropil_fr = net.neural_activity.read_neuropil_fr(i + 1)
+        target_bin_indices = net.neural_activity.neuropil_to_bin_indices(target_neuropil_fr)
+        predict_bin_indices = net.neural_activity.neuropil_to_bin_indices(neuropil_fr)
+        # print(predict_bin_indices, target_bin_indices)
+        acc = jnp.mean(jnp.asarray(target_bin_indices == predict_bin_indices, dtype=jnp.float32))
+        mse = u.get_mantissa(u.math.square(target_neuropil_fr - neuropil_fr)).mean()
+        bar.set_description(f'Bin acc = {acc}, mse = {mse}')
+        bar.update(1)
+        accs.append(float(acc))
     simulated_neuropil_fr = np.asarray(simulated_neuropil_fr)  # [n_time, n_neuropil]
     # np.save(os.path.join(filepath, 'simulated_neuropil_fr'), simulated_neuropil_fr)
+    print('Mean bin acc =', np.mean(accs))
 
     import matplotlib.pyplot as plt
     experimental_neuropil_fr = np.asarray(net.neural_activity.spike_rates / u.Hz)  # [n_time, n_neuropil]
@@ -1151,7 +1188,7 @@ def example_to_load():
 
 if __name__ == '__main__':
     pass
-    first_round_train()
+    # first_round_train()
     # second_round_train()
     # example_to_simulate()
-    # example_to_load()
+    example_to_load()
