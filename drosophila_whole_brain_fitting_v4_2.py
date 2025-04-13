@@ -14,16 +14,62 @@
 # ==============================================================================
 
 """
+Drosophila Whole Brain Fitting Model (v4.2)
 
-1、连续数值的 firing rate tokenization
+This module implements a comprehensive framework for modeling and predicting neural activity
+in the Drosophila brain using a combination of spiking neural networks and recurrent neural
+networks. The model leverages the FlyWire connectome dataset to construct biologically plausible
+network architectures that replicate observed firing patterns in the fly brain.
 
-使用 uniform binning，将连续数值的 firing rate tokenize为 若干个 bin，每个 bin 代表 0.1 mV 的 firing rate。
-每个 bin 对应一个 token，token 之间的距离为 0.1 mV。每个bin使用随机的 embedding 表示。
+Training Process:
+----------------
+The training is structured in two rounds:
 
-2、训练范式
+1. First Round:
+   - Trains a biologically plausible spiking neural network using eligibility traces
+   - Maps activity from previous time steps to predict current time step activity
+   - Uses a combination of sparse connectivity from the connectome and low-rank trainable
+     parameters (LoRA) for computational efficiency
+   - Optimizes network weights to minimize differences between predicted and observed firing rates
 
-使用上一个时刻的 firing rate 作为输入，当前时刻的 firing rate 作为输出。
+2. Second Round:
+   - Trains a GRU-based recurrent neural network as an input encoder/decoder
+   - Uses simulated data from the first-round model as training data
+   - Provides a more efficient representation for generating sequences of neural activity
 
+Input Generation:
+----------------
+1. Firing Rate Tokenization:
+   - Continuous firing rates are tokenized into discrete bins using uniform binning
+   - Each bin represents X mV of firing rate with equal spacing between tokens
+   - Provides a discrete representation suitable for classification metrics
+
+2. Input Handling:
+   - Neural activities are loaded from experimental datasets
+   - Firing rates are normalized and scaled appropriately
+   - Noise is optionally added for robustness during training
+   - Input representation includes previous time step activity to predict next step
+
+Training Paradigm:
+----------------
+The core training paradigm follows next-step prediction:
+- Use previous time step firing rates as input
+- Predict current time step firing rates as output
+- Compare predictions against observed/target firing rates
+- Update network parameters using gradient-based optimization
+- Apply eligibility traces for biologically plausible learning in spiking networks
+
+Key Components:
+-------------
+- Population: Implements leaky integrate-and-fire neurons with FlyWire connectome
+- Interaction: Handles synaptic connectivity and signal propagation between neurons
+- NeuralActivity: Manages neural activity data and conversions
+- DrosophilaSpikingNetwork: Integrates components into a full brain simulation
+- SpikingNetworkTrainer: Handles training and optimization procedures
+- DrosophilaInputEncoder: GRU-based network for efficient representation learning
+
+The module provides utilities for loading pre-trained models, generating simulation data,
+and visualizing results for thorough analysis of network performance.
 """
 
 from __future__ import annotations
@@ -35,8 +81,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Callable
-
-from tqdm import tqdm
 
 if (
     platform.system() == 'Linux'
@@ -50,6 +94,7 @@ if (
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '.99'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -1659,37 +1704,6 @@ def second_round_loading():
         plt.show()
 
 
-def example_to_simulate():
-    import matplotlib.pyplot as plt
-    brainstate.environ.set(dt=0.2 * u.ms)
-    net = DrosophilaSpikingNetwork(
-        flywire_version='630',
-        neural_activity_id='2017-10-26_1',
-        neural_activity_max_fr=100 * u.Hz,
-        conn_param_type=brainscale.NonTempParam,
-        input_param_type=brainscale.NonTempParam,
-        n_rank=20,
-        # scale_factor=0.0825 / 40 * u.mV,
-        scale_factor=0.0825 / 100 * u.mV,
-    )
-    brainstate.nn.init_all_states(net)
-
-    neuropil_fr = net.neural_activity.read_neuropil_fr(0)
-    t0 = 0.0 * u.ms
-    t1 = net.n_sample_step * brainstate.environ.get_dt()
-
-    for i in range(10):
-        neuropil_fr = net.simulate(neuropil_fr, t0, t0 + t1)
-        fig, gs = braintools.visualize.get_figure(2, 1, 3, 10.0)
-        fig.add_subplot(gs[0, 0])
-        barplot(net.neural_activity.neuropils, neuropil_fr.to_decimal(u.Hz), title='Simulated FR')
-        fig.add_subplot(gs[1, 0])
-        target_neuropil_fr = net.neural_activity.read_neuropil_fr(i + 1)
-        barplot(net.neural_activity.neuropils, target_neuropil_fr.to_decimal(u.Hz), title='True FR')
-        plt.show()
-        t0 += t1
-
-
 def example_to_load():
     """
     Load and initialize a pre-trained Drosophila spiking neural network model for demonstration.
@@ -1819,8 +1833,7 @@ def example_to_load():
 if __name__ == '__main__':
     pass
     # first_round_train()
-    # generate_training_data()
+    # first_round_generate_training_data()
     # second_round_train()
     # second_round_loading()
     example_to_load()
-    # example_to_simulate()
