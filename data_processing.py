@@ -25,7 +25,11 @@ import pandas as pd
 import seaborn as sns
 from joblib import Parallel, delayed
 
-from utils import deconvolve_dff_to_spikes, filter_region_response, trim_region_response
+from utils import (
+    deconvolve_dff_to_spikes,
+    filter_region_response,
+    trim_region_response,
+)
 
 
 def obtain_atalas_syn_count(flywire_version='783'):

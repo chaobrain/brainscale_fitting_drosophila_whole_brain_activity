@@ -16,6 +16,7 @@
 # -*- coding: utf-8 -*-
 
 
+import os
 import re
 
 import braintools
@@ -231,10 +232,17 @@ def plot_firing_rate_distribution():
     # plt.show()
 
 
+def list_data():
+    for filepath in os.listdir('./data/spike_rates'):
+        print(filepath.replace('ito_', '').replace('_spike_rate.npz', ''))
+
+
+
 if __name__ == '__main__':
     pass
     # extract_epoch_loss()
     # visualize_dff_fr()
     # compare_area_correlation()
     # compare_correlation_of_correlation_matrix()
-    plot_firing_rate_distribution()
+    # plot_firing_rate_distribution()
+    list_data()
