@@ -18,8 +18,6 @@
 
 import argparse
 import os
-import jax
-jax.core.extend_axis_env_nd
 
 
 def _set_gpu_preallocation(mode: float):

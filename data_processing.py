@@ -221,7 +221,7 @@ def visualize_dff_fr():
 
     sns.despine()
 
-    plt.savefig('dff-firing-rate.svg', transparent=True, dpi=500)
+    # plt.savefig('dff-firing-rate.svg', transparent=True, dpi=500)
     plt.show()
 
 
@@ -248,11 +248,11 @@ def visualize_correlation():
 
 if __name__ == '__main__':
     pass
-    # compute_experimental_fc('./data/neural_activity/ito_2017-10-26_1.npz')
+    compute_experimental_fc('./data/neural_activity/ito_2017-10-26_1.npz')
 
     # convert_calcium_to_spike_rate()
     # visualize_spike_rate()
-    visualize_dff_fr()
+    # visualize_dff_fr()
     # visualize_correlation()
 
     # obtain_atalas_syn_count('783')

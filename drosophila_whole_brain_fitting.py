@@ -475,4 +475,3 @@ if __name__ == '__main__':
     first_round_generate_training_data(_filepath_)
     second_round_train(_filepath_)
     example_to_load(_filepath_)
-    # second_round_loading()

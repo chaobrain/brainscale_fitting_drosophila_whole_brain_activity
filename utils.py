@@ -1802,6 +1802,7 @@ class DrospphilaSpikingNetTrainer:
             model = brainscale.ParamDimVjpAlgorithm(self.target, vjp_method=self.vjp_method)
         else:
             model = brainscale.IODimVjpAlgorithm(self.target, self.etrace_decay, vjp_method=self.vjp_method)
+
         # brainstate.nn.vmap_init_all_states(self.target, axis_size=n_batch, state_tag='hidden')
 
         @brainstate.augment.vmap_new_states(
@@ -2104,7 +2105,13 @@ class DrosophilaRestingStateModel:
         The first-round spiking neural network model with trained weights.
     """
 
-    def __init__(self, filepath: str, n_rnn_hidden: int):
+    def __init__(
+        self,
+        filepath: str,
+        n_rnn_hidden: int = 256,
+        load_checkpoint: bool = True
+    ):
+        self.load_checkpoint = load_checkpoint
         self.filepath = filepath
         self.args = FilePath.from_filepath(filepath)
 
@@ -2125,30 +2132,35 @@ class DrosophilaRestingStateModel:
             n_rank=self.args.n_rank,
             scale_factor=self.args.scale_factor,
         )
-        braintools.file.msgpack_load(
-            os.path.join(filepath, 'first-round-checkpoint.msgpack'),
-            self.spiking_net.states(brainstate.ParamState)
-        )
+        if load_checkpoint:
+            braintools.file.msgpack_load(
+                os.path.join(filepath, 'first-round-checkpoint.msgpack'),
+                self.spiking_net.states(brainstate.ParamState)
+            )
         brainstate.nn.init_all_states(self.spiking_net)
 
-        # Recurrent neural network for decoding
-        self.rnn_net = DrosophilaInputEncoder(
-            n_in=self.data.n_neuropil,
-            n_hidden=n_rnn_hidden,
-            n_out=self.data.n_neuropil
-        )
-        braintools.file.msgpack_load(
-            os.path.join(filepath, f'second-round-checkpoint.msgpack'),
-            self.rnn_net.states(brainstate.LongTermState)
-        )
-        brainstate.nn.init_all_states(self.rnn_net)
+        if load_checkpoint:
+            # Recurrent neural network for decoding
+            self.rnn_net = DrosophilaInputEncoder(
+                n_in=self.data.n_neuropil,
+                n_hidden=n_rnn_hidden,
+                n_out=self.data.n_neuropil
+            )
+            braintools.file.msgpack_load(
+                os.path.join(filepath, f'second-round-checkpoint.msgpack'),
+                self.rnn_net.states(brainstate.LongTermState)
+            )
+            brainstate.nn.init_all_states(self.rnn_net)
 
     @brainstate.compile.jit(static_argnums=0)
     def _predict(self, neuropil_firing_rate, target_firing_rate, running_indices):
         n_sim = int(self.args.sim_before_train * self.spiking_net.n_sample_step)
 
         # input
-        rnn_out = self.rnn_net(neuropil_firing_rate.to_decimal(u.Hz))
+        if self.load_checkpoint:
+            rnn_out = self.rnn_net(neuropil_firing_rate.to_decimal(u.Hz))
+        else:
+            rnn_out = neuropil_firing_rate
 
         # spiking simulation
         self.spiking_net.simulate(rnn_out / u.Hz, running_indices[:n_sim])
@@ -2165,7 +2177,7 @@ class DrosophilaRestingStateModel:
         mse = u.get_mantissa(u.math.square(target_firing_rate - neuropil_fr)).mean()
         return neuropil_fr, mse, acc
 
-    def f_predict(self):
+    def f_predict(self, filename: str = 'neuropil_fr_predictions'):
         t1 = brainstate.environ.get_dt() * self.spiking_net.n_sample_step
         indices = np.arange(self.spiking_net.n_sample_step)
         bar = tqdm(total=self.data.n_time - 1)
@@ -2188,7 +2200,7 @@ class DrosophilaRestingStateModel:
             f'Mean bin acc  = {np.mean(all_accs):.5f}, '
             f'mean mse loss = {np.mean(all_losses):.5f}'
         )
-        np.save(os.path.join(self.filepath, 'neuropil_fr_predictions'), simulated_neuropil_fr)
+        np.save(os.path.join(self.filepath, filename), simulated_neuropil_fr)
         experimental_neuropil_fr = np.asarray(self.data.spike_rates[1:] / u.Hz)  # [n_time, n_neuropil]
 
         num = 5
@@ -2208,5 +2220,5 @@ class DrosophilaRestingStateModel:
                 data = experimental_neuropil_fr[:, i + ii]
                 plt.plot(times, data)
                 plt.ylim(0., data.max() * 1.05)
-            plt.savefig(f'{filepath}/neuropil_fr_predictions_{ii}.pdf')
+            plt.savefig(f'{filepath}/{filename}_{ii}.pdf')
         plt.close()

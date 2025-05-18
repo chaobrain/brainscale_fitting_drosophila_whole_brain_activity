@@ -2,11 +2,7 @@ pyarrow
 fastparquet
 pandas
 tqdm
-brainevent
-brainscale
-brainunit
-braintools
-brainstate
+BrainX
 matplotlib
 optax
 jax
@@ -15,3 +11,4 @@ scipy
 numba
 warp-lang
 msgpack
+seaborn
