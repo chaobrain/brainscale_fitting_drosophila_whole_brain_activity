@@ -108,7 +108,7 @@ import jax.numpy as jnp
 from utils import (
     output,
     FilePath,
-    DrospphilaSpikingNetTrainer,
+    DrosophilaSpikingNetTrainer,
     NeuralData,
     DrosophilaSpikingNetwork,
     DrosophilaInputEncoder,
@@ -120,7 +120,7 @@ brainstate.environ.set(dt=settings.dt * u.ms)
 
 
 def _train_spiking_network(
-    trainer: DrospphilaSpikingNetTrainer,
+    trainer: DrosophilaSpikingNetTrainer,
     train_epoch: int,
     batch_size: int = 128,
     checkpoint_path: str = None,
@@ -213,7 +213,7 @@ def first_round_train():
     - When resuming from a checkpoint, parameters are extracted from the checkpoint filepath
     - Uses a 0.2 ms simulation time step
     """
-    trainer = DrospphilaSpikingNetTrainer(
+    trainer = DrosophilaSpikingNetTrainer(
         lr=settings.lr_round1,
         etrace_decay=settings.etrace_decay,
         sim_before_train=settings.sim_before_train,

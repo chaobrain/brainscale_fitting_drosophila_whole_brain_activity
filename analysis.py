@@ -103,7 +103,42 @@ def visualize_dff_fr():
     plt.title('Simulated Firing Rate')
 
     sns.despine()
-    plt.savefig('dff-firing-rate.svg', transparent=True, dpi=500)
+    # plt.savefig('dff-firing-rate.svg', transparent=True, dpi=500)
+    plt.show()
+
+def visualize_dff():
+    data = np.load('./data/spike_rates/ito_2017-10-26_1_spike_rate.npz')
+    dff = data['dff'][1:]
+    rates = data['rates'][1:]
+
+    max_x = 800
+    inc = 0.3
+
+    num = 20
+    fig, gs = braintools.visualize.get_figure(1, 2, 7, 5)
+    fig.add_subplot(gs[0, 0])
+    xpos = np.arange(num) / 3
+    times = np.arange(dff.shape[1]) * 1 / 1.2
+
+    for i in range(num):
+        plt.plot(times, dff[i] + xpos[i])
+    plt.xlim(0, max_x)
+    plt.ylim(-inc, xpos[-1] + inc)
+    plt.yticks(xpos, data['areas'][:num])
+    plt.xlabel('Time [s]')
+    plt.title('dF/F')
+
+    fig.add_subplot(gs[0, 1])
+    for i in range(num):
+        plt.plot(times, rates[i] * 6 + xpos[i])
+    plt.xlim(0, max_x)
+    plt.ylim(-inc, xpos[-1] + inc)
+    plt.yticks([])
+    plt.xlabel('Time [s]')
+    plt.title('Deconvolved Firing Rate')
+
+    sns.despine()
+    plt.savefig('experimental-dff.svg', transparent=True, dpi=500)
     plt.show()
 
 
@@ -242,7 +277,8 @@ if __name__ == '__main__':
     pass
     # extract_epoch_loss()
     # visualize_dff_fr()
+    visualize_dff()
     # compare_area_correlation()
     # compare_correlation_of_correlation_matrix()
     # plot_firing_rate_distribution()
-    list_data()
+    # list_data()

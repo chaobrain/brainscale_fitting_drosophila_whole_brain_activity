@@ -40,7 +40,7 @@ from sklearn.manifold import TSNE
 from utils import FilePath, split_train_test, read_setting
 
 
-def pearson_corr(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+def pearson_corr(x: jax.Array, y: jax.Array) -> jax.Array:
     # Pearson 相关系数 #
     # ---
     x_mean = jnp.mean(x)
@@ -52,13 +52,13 @@ def pearson_corr(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     return num / den
 
 
-def _rankdata(x: jnp.ndarray) -> jnp.ndarray:
+def _rankdata(x: jax.Array) -> jax.Array:
     # 对每个元素计算其在排序后的位置（1…N）
     # 简易实现：对每对比较求和
     return jnp.argsort(jnp.argsort(x)) + 1
 
 
-def spearman_corr(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+def spearman_corr(x: jax.Array, y: jax.Array) -> jax.Array:
     # Spearman 等级相关系数 #
     # ---
     # Spearman 秩相关系数衡量的是两个序列的秩之间的线性相关性。
@@ -69,7 +69,7 @@ def spearman_corr(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     return pearson_corr(rx, ry)
 
 
-def kendall_tau(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+def kendall_tau(x: jax.Array, y: jax.Array) -> jax.Array:
     n = x.shape[0]
     # 生成所有 i<j 对
     ii, jj = jnp.triu_indices(n, k=1)
@@ -80,7 +80,7 @@ def kendall_tau(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     return (concordant - discordant) / (0.5 * n * (n - 1))
 
 
-def cross_correlation(x: jnp.ndarray, y: jnp.ndarray):
+def cross_correlation(x: jax.Array, y: jax.Array):
     # 互相关（Cross-Correlation） #
     # ----
     # 互相关衡量的是两个序列在不同时间偏移下的相似性。
@@ -100,7 +100,7 @@ def cross_correlation(x: jnp.ndarray, y: jnp.ndarray):
     return jax.lax.fori_loop(0, 2 * nx - 1, body_fun, jnp.zeros(2 * nx - 1))
 
 
-def jaccard_similarity(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
+def jaccard_similarity(a: jax.Array, b: jax.Array) -> jax.Array:
     # 杰卡德相似度（Jaccard Similarity） #
     # ---
     # 用于二值序列/集合，衡量交并比。
@@ -111,7 +111,7 @@ def jaccard_similarity(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
     return intersection / union
 
 
-def dtw_distance(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
+def dtw_distance(x: jax.Array, y: jax.Array) -> jax.Array:
     # 动态时间规整（DTW, Dynamic Time Warping）距离 #
     # ---
     # 虽然不是“相关系数”，但常用于衡量时序形状相似性。
@@ -559,10 +559,11 @@ def _visualize_firing_rates_v4(
     trained_rates: np.ndarray,
     untrained_rates: np.ndarray,
     plot_filename: str = None,
+    legend: bool = True
 ):
     # Set nicer theme with clean style
     seaborn.set_theme(style='ticks')
-    fig, gs = braintools.visualize.get_figure(3, len(rates), 2, 10)  # 3 rows, len(rates) columns
+    fig, gs = braintools.visualize.get_figure(3, len(rates), 2, 12)  # 3 rows, len(rates) columns
 
     # Time arrays for each phase
     time_gap = 1 / 1.2 / u.Hz
@@ -652,15 +653,16 @@ def _visualize_firing_rates_v4(
                                                   alpha=style['alpha'], label=f"{phase.capitalize()} phase"))
 
     # Add legend outside the plots
-    fig.legend(
-        handles=legend_elements,
-        # loc='center left',
-        bbox_to_anchor=(1.0, 0.5),
-        fontsize=9,
-        frameon=True,
-        # title="Legend",
-        title_fontsize=10
-    )
+    if legend:
+        fig.legend(
+            handles=legend_elements,
+            # loc='center left',
+            bbox_to_anchor=(1.0, 0.5),
+            fontsize=9,
+            frameon=True,
+            # title="Legend",
+            title_fontsize=10
+        )
 
     # # Adjust layout
     plt.tight_layout(rect=(0, 0, 0.88, 0.95))
@@ -710,7 +712,8 @@ def _visualize_experimental_and_simulated_firing_rates_v4(filepath: str):
         rates[top_indices],
         trained_rates[top_indices],
         untrained_rates[top_indices],
-        # os.path.join(filepath, 'analysis', f'fr-comparison-exp-trained-untrained.pdf')
+        os.path.join(filepath, 'analysis', f'fr-comparison-exp-trained-untrained.pdf'),
+        legend=False,
     )
 
 
@@ -835,11 +838,17 @@ def _compare_area_correlation_trained_untrained(filepath: str, savefig: bool = F
     trained_cor = np.asarray(jax.vmap(corr_fn)(rates, trained_rates))
     untrained_cor = np.asarray(jax.vmap(corr_fn)(rates, untrained_rates))
 
+    percent = jnp.sum(trained_cor > untrained_cor) / trained_cor.shape[0]
+    print(percent)
+    print(f'trained model, mean ± std = {np.mean(trained_cor)} ± {np.std(trained_cor)}')
+    print(f'untrained model, mean ± std = {np.mean(untrained_cor)} ± {np.std(untrained_cor)}')
+
     # Create barplot of correlations with area labels
     seaborn.set_theme(font_scale=0.9, style=None)
 
     # Create barplot comparing trained and untrained correlations
-    fig, gs = braintools.visualize.get_figure(1, 1, 4.5, 10)  # Adjust figure size for better readability
+    fig, gs = braintools.visualize.get_figure(1, 1, 4.5, 12)  # Adjust figure size for better readability
+    # fig, gs = braintools.visualize.get_figure(1, 1, 4, 8)  # Adjust figure size for better readability
     ax = fig.add_subplot(gs[0, 0])
 
     # Create a DataFrame for easier plotting
@@ -865,7 +874,7 @@ def _compare_area_correlation_trained_untrained(filepath: str, savefig: bool = F
         analysis_path = os.path.join(filepath, 'analysis')
         os.makedirs(analysis_path, exist_ok=True)
         plt.savefig(
-            os.path.join(analysis_path, f'trained_untrained_area_correlations-{orient}.pdf'),
+            os.path.join(analysis_path, f'trained_untrained_area_correlations-{orient}-{percent:.3f}.pdf'),
             dpi=300,
             bbox_inches='tight',
             transparent=True,
@@ -878,6 +887,7 @@ def _compare_area_correlation_trained_untrained(filepath: str, savefig: bool = F
 def compare_are_correlation_trained_untrained():
     for filepath in glob.glob('results/*'):
         filepath = filepath.replace('\\', '/')
+        # _compare_area_correlation_trained_untrained(filepath, savefig=True)
         _compare_area_correlation_trained_untrained(filepath, savefig=False)
 
 
@@ -984,13 +994,17 @@ def _compare_correlation_matrix(
 def _compare_correlation_matrix_v2(
     filepath: str,
     show_ticks: bool = False,
-    savefig: bool = False
+    savefig: bool = False,
+    training: bool = True,
 ):
     print(filepath)
     args = FilePath.from_filepath(filepath)
     settings = read_setting(filepath)
 
-    simulated_rates = np.load(os.path.join(filepath, 'neuropil_fr_predictions.npy')).T
+    if training:
+        simulated_rates = np.load(os.path.join(filepath, 'neuropil_fr_predictions.npy')).T
+    else:
+        simulated_rates = np.load(os.path.join(filepath, 'neuropil_fr_predictions_untrained.npy')).T
     data = np.load(f'./data/spike_rates/ito_{args.neural_activity_id}_spike_rate.npz')
     dff = data['dff'][1:]
     rates = data['rates'][1:, 1:] * args.neural_activity_max_fr / u.Hz
@@ -1083,16 +1097,24 @@ def _compare_correlation_matrix_v2(
         ax_train.set_title(f'Simulated Correlation Matrix (similarity = {train_corr:.4f})')
         ax_train.axis('off')
 
-        im3 = ax_train.imshow(sim_test_correlation, cmap=cmap, vmin=-1, vmax=1)
-        plt.colorbar(im3, shrink=0.6)
+        im3 = ax_test.imshow(sim_test_correlation, cmap=cmap, vmin=-1, vmax=1)
         ax_test.set_title(f'Simulated Correlation Matrix (similarity = {test_corr:.4f})')
         ax_test.axis('off')
+        plt.colorbar(im3, shrink=0.6)
+        # plt.colorbar(im3, shrink=0.6, location="bottom")
 
     plt.suptitle(f'{args.neural_activity_id} {args.flywire_version}')
-
     if savefig:
         os.makedirs(os.path.join(filepath, 'analysis'), exist_ok=True)
-        plt.savefig(os.path.join(filepath, 'analysis', 'correlation-matrix-v2.pdf'), transparent=True, dpi=500)
+        plt.savefig(
+            (
+                os.path.join(filepath, 'analysis', 'correlation-matrix-trained.pdf')
+                if training else
+                os.path.join(filepath, 'analysis', 'correlation-matrix-untrained.pdf')
+            ),
+            transparent=True,
+            dpi=500
+        )
     else:
         plt.show()
     plt.close()
@@ -1101,12 +1123,16 @@ def _compare_correlation_matrix_v2(
 def compare_correlation_of_correlation_matrix():
     for filepath in glob.glob('results/*'):
         filepath = filepath.replace('\\', '/')
-        # _compare_correlation_matrix(filepath, show_ticks=True, savefig=False)
-        # _compare_correlation_matrix(filepath, show_ticks=True, savefig=True)
-        _compare_correlation_matrix_v2(filepath, show_ticks=True, savefig=True)
+        try:
+            # _compare_correlation_matrix(filepath, show_ticks=True, savefig=False)
+            # _compare_correlation_matrix(filepath, show_ticks=True, savefig=True)
+            _compare_correlation_matrix_v2(filepath, show_ticks=False, savefig=False, training=True)
+            _compare_correlation_matrix_v2(filepath, show_ticks=False, savefig=False, training=False)
+        except:
+            pass
 
     # -----
-    # comfirm the results in
+    # confirm the results in
     #       visualize_experimental_and_simulated_firing_rates()
     # -----
 
@@ -1319,7 +1345,7 @@ if __name__ == '__main__':
 
     # compare_area_correlation()
 
-    compare_are_correlation_trained_untrained()
+    # compare_are_correlation_trained_untrained()
 
     # visualize_low_rank_connectivity_matrix()
 
@@ -1328,7 +1354,7 @@ if __name__ == '__main__':
     # visualize_training_loss_and_accuracy()
     # visualize_experimental_trained_untrained_firing_rates()
 
-    # compare_correlation_of_correlation_matrix()
+    compare_correlation_of_correlation_matrix()
 
     # compare_connectivity_matrix()
 

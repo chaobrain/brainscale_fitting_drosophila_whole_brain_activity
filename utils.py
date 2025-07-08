@@ -675,6 +675,7 @@ def load_syn(flywire_version: str | int) -> brainevent.CSR:
     indptr = np.cumsum(indptr)
     indices = i_post
 
+    weight = jnp.asarray(weight, dtype=brainstate.environ.dftype())
     csr = brainevent.CSR((weight, indices, indptr), shape=(n_neuron, n_neuron))
     return csr
 
@@ -1643,17 +1644,18 @@ class DrosophilaSpikingNetwork(brainstate.nn.Module):
             spk = self.interaction.update()
             return spk
 
-    @brainstate.compile.jit(static_argnums=0)
-    def simulate(self, inp_embedding, indices):
+    @brainstate.compile.jit(static_argnums=0, static_argnames='return_spikes')
+    def simulate(self, inp_embedding, indices, return_spikes=False):
         def step_run(i):
-            self.update_test(i, noise_weight)
+            spk = self.update_test(i, noise_weight)
+            return spk if return_spikes else None
 
         noise_weight = self.input.encoder(inp_embedding)
         self.pop.reset_spk_count()
-        brainstate.compile.for_loop(step_run, indices)
+        return brainstate.compile.for_loop(step_run, indices)
 
 
-class DrospphilaSpikingNetTrainer:
+class DrosophilaSpikingNetTrainer:
     """
     A class for training spiking neural network models to simulate firing rate patterns
     in Drosophila whole brain data.
@@ -2152,8 +2154,8 @@ class DrosophilaRestingStateModel:
             )
             brainstate.nn.init_all_states(self.rnn_net)
 
-    @brainstate.compile.jit(static_argnums=0)
-    def _predict(self, neuropil_firing_rate, target_firing_rate, running_indices):
+    @brainstate.compile.jit(static_argnums=0, static_argnames='return_spikes')
+    def _predict(self, neuropil_firing_rate, target_firing_rate, running_indices, return_spikes=False):
         n_sim = int(self.args.sim_before_train * self.spiking_net.n_sample_step)
 
         # input
@@ -2163,8 +2165,10 @@ class DrosophilaRestingStateModel:
             rnn_out = neuropil_firing_rate
 
         # spiking simulation
-        self.spiking_net.simulate(rnn_out / u.Hz, running_indices[:n_sim])
-        self.spiking_net.simulate(rnn_out / u.Hz, running_indices[n_sim:])
+        spks1 = self.spiking_net.simulate(rnn_out / u.Hz, running_indices[:n_sim], return_spikes=return_spikes)
+        spks2 = self.spiking_net.simulate(rnn_out / u.Hz, running_indices[n_sim:], return_spikes=return_spikes)
+        if return_spikes:
+            spks = jnp.concatenate([spks1, spks2], axis=0)
 
         # firing rate
         neuropil_fr = self.data.count_neuropil_fr(self.spiking_net.pop.spike_count.value,
@@ -2175,7 +2179,37 @@ class DrosophilaRestingStateModel:
         predict_bin_indices = neuropil_to_bin_indices(neuropil_fr, self.data.bins)
         acc = jnp.mean(jnp.asarray(target_bin_indices == predict_bin_indices, dtype=jnp.float32))
         mse = u.get_mantissa(u.math.square(target_firing_rate - neuropil_fr)).mean()
-        return neuropil_fr, mse, acc
+        if return_spikes:
+            return spks, neuropil_fr, mse, acc
+        else:
+            return neuropil_fr, mse, acc
+
+    def f_test(self, n_time, filename: str = 'neuropil_fr_test'):
+        indices = np.arange(self.spiking_net.n_sample_step)
+        simulated_spike_indices = []
+        simulated_spike_times = []
+        simulated_neuropil_fr = []
+        for i in range(n_time):
+            if i < 100:
+                neuropil_fr = self.data.read_neuropil_fr(i)
+            target_neuropil_fr = self.data.read_neuropil_fr(i + 1)
+            spikes, neuropil_fr, mse, acc = self._predict(neuropil_fr, target_neuropil_fr, indices, return_spikes=True)
+            spk_times, spk_indices = np.where(spikes)
+            spk_times += i * self.spiking_net.n_sample_step
+            simulated_neuropil_fr.append(np.asarray(neuropil_fr.to_decimal(u.Hz)))
+            simulated_spike_times.append(spk_times)
+            simulated_spike_indices.append(spk_indices)
+            indices += self.spiking_net.n_sample_step
+        simulated_spike_times = np.concatenate(simulated_spike_times, axis=0)
+        simulated_spike_indices = np.concatenate(simulated_spike_indices, axis=0)
+        simulated_neuropil_fr = np.asarray(simulated_neuropil_fr)  # [n_time, n_neuropil]
+
+        np.savez(
+            os.path.join(self.filepath, filename),
+            spike_times=simulated_spike_times,
+            spike_indices=simulated_spike_indices,
+            simulated_neuropil_fr=simulated_neuropil_fr
+        )
 
     def f_predict(self, filename: str = 'neuropil_fr_predictions'):
         t1 = brainstate.environ.get_dt() * self.spiking_net.n_sample_step
