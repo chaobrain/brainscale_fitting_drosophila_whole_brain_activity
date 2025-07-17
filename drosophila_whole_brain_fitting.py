@@ -228,6 +228,7 @@ def first_round_train():
         vjp_method=settings.vjp_method,
         n_rank=settings.n_lora_rank,
         split=settings.split,
+        fitting_target=settings.fitting_target,
     )
     _train_spiking_network(
         trainer,

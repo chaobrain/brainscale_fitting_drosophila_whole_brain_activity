@@ -851,6 +851,7 @@ class FilePath(NamedTuple):
     sim_before_train: float
     bin_size: u.Quantity[u.Hz]
     split: float
+    fitting_target: str = 'lora'
 
     def to_filepath(self):
         """
@@ -879,6 +880,7 @@ class FilePath(NamedTuple):
             f'{self.sim_before_train}#'
             f'{self.bin_size.to_decimal(u.Hz)}#'
             f'{self.split}#'
+            f'{self.fitting_target}#'
         )
 
     @classmethod
@@ -913,6 +915,7 @@ class FilePath(NamedTuple):
         sim_before_train = float(setting[9])
         bin_size = float(setting[10]) * u.Hz
         split = float(setting[11])
+        fitting_target = setting[12] if len(setting) > 12 else 'lora'
 
         return cls(
             flywire_version=flywire_version,
@@ -927,6 +930,7 @@ class FilePath(NamedTuple):
             sim_before_train=sim_before_train,
             bin_size=bin_size,
             split=split,
+            fitting_target=fitting_target,
         )
 
 
@@ -1377,9 +1381,6 @@ class Interaction(brainstate.nn.Module):
         The neural population containing the neurons that will interact.
     scale_factor : u.Quantity
         Scaling factor for the synaptic weights, specified with units.
-    conn_mode : str, optional
-        Connection mode specifying how neurons are connected, defaults to 'sparse+low+rank'.
-        Currently only supports 'sparse+low+rank'.
     conn_param_type : type, optional
         Parameter type for connection weights (typically a brainscale parameter class),
         defaults to brainscale.ETraceParam.
@@ -1406,8 +1407,11 @@ class Interaction(brainstate.nn.Module):
         scale_factor: u.Quantity,
         conn_param_type: type = brainscale.ETraceParam,
         n_rank: int = 20,
+        fitting_target: str = 'lora'
     ):
         super().__init__()
+
+        self.fitting_target = fitting_target
 
         # neuronal and synaptic dynamics
         self.pop = pop
@@ -1425,17 +1429,25 @@ class Interaction(brainstate.nn.Module):
         # connectivity matrix
         self.scale_factor = scale_factor
 
-        # do not train sparse connection
-        self.conn = brainstate.nn.SparseLinear(csr, b_init=None, param_type=brainstate.FakeState)
+        if fitting_target == 'lora':
+            # do not train sparse connection
+            self.conn = brainstate.nn.SparseLinear(csr, b_init=None, param_type=brainstate.FakeState)
 
-        # train LoRA weights
-        self.lora = brainscale.nn.LoRA(
-            in_features=self.pop.in_size,
-            lora_rank=n_rank,
-            out_features=self.pop.out_size,
-            A_init=brainstate.init.LecunNormal(unit=u.mV),
-            param_type=conn_param_type
-        )
+            # train LoRA weights
+            self.lora = brainscale.nn.LoRA(
+                in_features=self.pop.in_size,
+                lora_rank=n_rank,
+                out_features=self.pop.out_size,
+                A_init=brainstate.init.LecunNormal(unit=u.mV),
+                param_type=conn_param_type
+            )
+
+        elif fitting_target == 'csr':
+            # do not train sparse connection
+            self.conn = brainscale.nn.SparseLinear(csr, b_init=None)
+
+        else:
+            raise ValueError('fitting_target must be either "lora" or "csr"')
 
     def update(self, x=None):
         """
@@ -1453,7 +1465,8 @@ class Interaction(brainstate.nn.Module):
 
         # compute recurrent connections and update neurons
         inp = self.conn(brainevent.EventArray(pre_spk)) * self.scale_factor
-        inp = inp + self.lora(pre_spk)
+        if self.fitting_target == 'lora':
+            inp = inp + self.lora(pre_spk)
 
         if x is None:
             x = inp
@@ -1596,6 +1609,7 @@ class DrosophilaSpikingNetwork(brainstate.nn.Module):
         conn_param_type: type = brainscale.ETraceParam,
         input_param_type: type = brainscale.ETraceParam,
         sampling_rate: u.Quantity = 1.2 * u.Hz,
+        fitting_target: str = 'lora'
     ):
         super().__init__()
 
@@ -1624,6 +1638,7 @@ class DrosophilaSpikingNetwork(brainstate.nn.Module):
             n_rank=n_rank,
             scale_factor=scale_factor,
             conn_param_type=conn_param_type,
+            fitting_target=fitting_target,
         )
 
     def update(self, i, embedding: u.Quantity):
@@ -1727,6 +1742,7 @@ class DrosophilaSpikingNetTrainer:
         scale_factor=0.01 * u.mV,
         bin_size: u.Quantity = 0.1 * u.Hz,
         split: float = 0.7,
+        fitting_target: str = 'lora',
     ):
         # parameters
         self.sim_before_train = sim_before_train
@@ -1752,6 +1768,7 @@ class DrosophilaSpikingNetTrainer:
             input_param_type=input_param_type,
             scale_factor=scale_factor,
             n_rank=n_rank,
+            fitting_target=fitting_target,
         )
 
         # optimizer
@@ -1773,6 +1790,7 @@ class DrosophilaSpikingNetTrainer:
             sim_before_train=sim_before_train,
             bin_size=bin_size,
             split=split,
+            fitting_target=fitting_target,
         )
         self.filepath = f"{args.to_filepath()}#{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
 
@@ -2111,7 +2129,7 @@ class DrosophilaRestingStateModel:
         self,
         filepath: str,
         n_rnn_hidden: int = 256,
-        load_checkpoint: bool = True
+        load_checkpoint: bool = True,
     ):
         self.load_checkpoint = load_checkpoint
         self.filepath = filepath
@@ -2133,6 +2151,7 @@ class DrosophilaRestingStateModel:
             input_param_type=self.args.input_param_type,
             n_rank=self.args.n_rank,
             scale_factor=self.args.scale_factor,
+            fitting_target=self.args.fitting_target,
         )
         if load_checkpoint:
             braintools.file.msgpack_load(
