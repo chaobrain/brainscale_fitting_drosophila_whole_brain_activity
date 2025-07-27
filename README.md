@@ -11,6 +11,21 @@ The model consists of:
 
 The implementation uses JAX for accelerated computation and follows a two-round training process.
 
+
+## Data
+
+This project requires two main datasets:
+
+- connectome data from the FlyWire project (version 630/783): https://codex.flywire.ai/
+- neural activity recordings from the Drosophila brain: https://doi.org/10.6084/m9.figshare.13349282
+
+
+We have also provided preprocessed data files in the `data/` directory for convenience.
+
+Please download the datasets (https://drive.google.com/file/d/1YeespJpoRfwS_kkH-VVuuFSJNgERcUK_/view?usp=drive_link) and place them in the appropriate directories (`data/`) as specified in the code.
+
+
+
 ## Key Features
 
 - Loads and processes Drosophila brain connectome data
@@ -37,7 +52,6 @@ python drosophila_whole_brain_fitting.py --flywire_version 630 --neural_activity
 - `--epoch_round1`: Number of epochs for first-round training
 - `--epoch_round2`: Number of epochs for second-round training
 
-## Training Process
 
 The model follows a two-round training approach:
 
@@ -57,3 +71,24 @@ The model generates visualizations comparing:
 - Experimental neuropil firing rates
 
 Figures are saved in the output directory.
+
+
+## Citation 
+
+
+If you use this code or data, please cite:
+
+```text
+@article {Wang2024brainscale,
+     author = {Wang, Chaoming and Dong, Xingsi and Jiang, Jiedong and Ji, Zilong and Liu, Xiao and Wu, Si},
+     title = {BrainScale: Enabling Scalable Online Learning in Spiking Neural Networks},
+     elocation-id = {2024.09.24.614728},
+     year = {2024},
+     doi = {10.1101/2024.09.24.614728},
+     publisher = {Cold Spring Harbor Laboratory},
+     abstract = {Whole-brain simulation stands as one of the most ambitious endeavors of our time, yet it remains constrained by significant technical challenges. A critical obstacle in this pursuit is the absence of a scalable online learning framework capable of supporting the efficient training of complex, diverse, and large-scale spiking neural networks (SNNs). To address this limitation, we introduce BrainScale, a framework specifically designed to enable scalable online learning in SNNs. BrainScale achieves three key advancements for scalability. (1) Model diversity: BrainScale accommodates the complex dynamics of brain function by supporting a wide spectrum of SNNs through a streamlined abstraction of synaptic interactions. (2) Efficient scaling: Leveraging SNN intrinsic characteristics, BrainScale achieves an online learning algorithm with linear memory complexity. (3) User-friendly programming: BrainScale provides a programming environment that automates the derivation and execution of online learning computations for any user-defined models. Our comprehensive evaluations demonstrate BrainScale{\textquoteright}s efficiency and robustness, showing a hundred-fold improvement in memory utilization and several-fold acceleration in training speed while maintaining performance on long-term dependency tasks and neuromorphic datasets. These results suggest that BrainScale represents a crucial step towards brain-scale SNN training and whole-brain simulation.Competing Interest StatementThe authors have declared no competing interest.},
+     URL = {https://www.biorxiv.org/content/early/2024/09/24/2024.09.24.614728},
+     eprint = {https://www.biorxiv.org/content/early/2024/09/24/2024.09.24.614728.full.pdf},
+     journal = {bioRxiv}
+}
+```

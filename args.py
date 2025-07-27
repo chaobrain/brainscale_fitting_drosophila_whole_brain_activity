@@ -153,7 +153,7 @@ def get_parser(gpu_pre_allocate=0.99):
                         help="The method for computing the Jacobian-vector product (JVP).")
     parser.add_argument("--etrace_decay", type=float, default=etrace_decay,
                         help="The time constant of eligibility trace ")
-    parser.add_argument("--fitting_target", type=str, default='lora', choices=['lora', 'csr'])
+    parser.add_argument("--fitting_target", type=str, default='csr', choices=['lora', 'csr'])
 
     # training parameters
     parser.add_argument('--dt', type=float, default=dt, help='Control the time step of the simulation.')
