@@ -92,7 +92,7 @@ from models import DrosophilaSpikingNetTrainer
 brainstate.environ.set(dt=settings.dt * u.ms)
 
 
-def first_round_train():
+def training():
     """
     Train the first round of a spiking neural network to simulate Drosophila brain activity.
 
@@ -141,4 +141,4 @@ def first_round_train():
 
 
 if __name__ == '__main__':
-    first_round_train()
+    training()

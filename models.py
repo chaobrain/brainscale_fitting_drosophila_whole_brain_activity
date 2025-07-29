@@ -1560,6 +1560,7 @@ class Input2CurrentEncoder(brainstate.nn.Module):
 
         # neural activity conversion
         self.encoder = brainstate.nn.Sequential(
+            brainstate.nn.LayerNorm(n_in, use_scale=False, use_bias=False),
             brainscale.nn.Linear(
                 n_in,
                 self.pop.varshape,
