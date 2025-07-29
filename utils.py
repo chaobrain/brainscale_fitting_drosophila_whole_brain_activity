@@ -18,6 +18,7 @@
 import datetime
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import NamedTuple, Callable
 
@@ -784,6 +785,7 @@ class ActivityTokenization:
         self.max_fr = max_fr
         self.bins = bins
 
+    @brainstate.transform.jit(static_argnums=0)
     def to_bin_indices(self, neuropil_fr: u.Quantity[u.Hz]):
         """
         Convert neuropil firing rates to bin indices.
@@ -894,7 +896,6 @@ class FilePath(NamedTuple):
     scale_factor: u.Quantity[u.mV]
     n_rank: int
     sim_before_train: float
-    bin_size: u.Quantity[u.Hz]
     split: float
     fitting_target: str = 'csr'
 
@@ -923,7 +924,6 @@ class FilePath(NamedTuple):
             f'{self.scale_factor.to_decimal(u.mV):5f}#'
             f'{self.n_rank}#'
             f'{self.sim_before_train}#'
-            f'{self.bin_size.to_decimal(u.Hz)}#'
             f'{self.split}#'
             f'{self.fitting_target}#'
         )
@@ -958,7 +958,6 @@ class FilePath(NamedTuple):
         scale_factor = float(setting[7]) * u.mV
         n_rank = int(setting[8])
         sim_before_train = float(setting[9])
-        bin_size = float(setting[10]) * u.Hz
         split = float(setting[11])
         fitting_target = setting[12] if len(setting) > 12 else 'lora'
 
@@ -973,7 +972,6 @@ class FilePath(NamedTuple):
             scale_factor=scale_factor,
             n_rank=n_rank,
             sim_before_train=sim_before_train,
-            bin_size=bin_size,
             split=split,
             fitting_target=fitting_target,
         )
@@ -1008,7 +1006,7 @@ class NeuralData:
         neural_activity_max_fr: u.Quantity = 120 * u.Hz,
         sampling_rate: u.Quantity = 1.0 * u.Hz,
         duration_per_train: u.Quantity = 10.0 * u.ms,
-        prediction_length: int = 10
+        n_warmup_data: int = 100,
     ):
         # neural activity data
         self.neural_activity_id = neural_activity_id
@@ -1017,7 +1015,9 @@ class NeuralData:
         self.spike_rates = u.math.asarray(data['rates'][1:] * neural_activity_max_fr).T  # [time, neuropil]
         self.sampling_rate = sampling_rate
         self.duration_per_train = duration_per_train
-        self.prediction_length = prediction_length
+        self.n_train_per_data = int(1 / sampling_rate / duration_per_train)
+        self.n_step_per_train = int(duration_per_train / brainstate.environ.get_dt())
+        self.n_warmup_data = n_warmup_data
 
         # connectivity data, which show a given neuropil contains which connections
         print('Loading connectivity information ...')
@@ -1054,7 +1054,7 @@ class NeuralData:
 
         # training/testing data split
         self.split = split
-        self.n_train, self.n_test = split_train_test(self.n_time, split, batch_size=batch_size)
+        self.n_train, self.n_test = split_train_test(self.n_time - n_warmup_data, split, batch_size=batch_size)
 
     @property
     def n_neuropil(self) -> int:
@@ -1076,40 +1076,7 @@ class NeuralData:
         """
         return self.spike_rates.shape[0]
 
-    @brainstate.compile.jit(static_argnums=0)
-    def neuropil_fr_to_embedding(self, neuropil_fr: u.Quantity[u.Hz]):
-        """
-        Convert firing rates from neuropil-level to embedding-level.
-
-        This method maps firing rates from individual neuropils to the embedding level
-        by applying a one-hot encoding to the firing rates.
-
-        Args:
-            neuropil_fr (u.Quantity[u.Hz]): Firing rates for each neuropil, specified in Hertz units.
-
-        Returns:
-            u.Quantity[u.Hz]: Embedding-level firing rates, specified in Hertz units.
-
-        Raises:
-            ValueError: If neuropil_fr has more than 2 dimensions.
-        """
-
-        def _convert(key, fr):
-            # convert firing rates to bins
-            right_bin_indices = neuropil_to_bin_indices(fr, self.bins)
-            left_bin_indices = right_bin_indices - 1
-            left = self.bins[left_bin_indices].to_decimal(u.Hz)
-            right = self.bins[right_bin_indices].to_decimal(u.Hz)
-            return jax.random.uniform(key, left.shape, minval=left, maxval=right)
-
-        if neuropil_fr.ndim == 1:
-            return _convert(brainstate.random.split_key(), neuropil_fr)
-        elif neuropil_fr.ndim == 2:
-            return jax.vmap(_convert)(brainstate.random.split_key(neuropil_fr.shape[0]), neuropil_fr)
-        else:
-            raise ValueError
-
-    def neuron_to_neuropil_fr(self, neuron_fr: u.Quantity[u.Hz]):
+    def _neuron_to_neuropil_fr(self, neuron_fr: u.Quantity[u.Hz]):
         """
         Convert firing rates from neuron-level to neuropil-level.
 
@@ -1136,18 +1103,6 @@ class NeuralData:
             neuropil_fr.append(u.math.sum(neuron_fr[pre_indices] * pre_weights))
         return u.math.asarray(neuropil_fr)
 
-    def read_neuropil_fr(self, i):
-        """
-        Read the spike rate of a specific time index.
-
-        Args:
-            i (int): The index of the time point to read from the stored spike rates.
-
-        Returns:
-            u.Quantity: The spike rates at the specified time index.
-        """
-        return self.spike_rates[i]
-
     def count_neuropil_fr(self, neuron_fr: u.Quantity):
         """
         Convert spike counts to firing rates at the neuropil level.
@@ -1163,11 +1118,21 @@ class NeuralData:
             u.Quantity: Firing rates for each neuropil, in Hz units.
         """
         neuron_fr = neuron_fr.to(u.Hz)
-        fun = self.neuron_to_neuropil_fr
+        fun = self._neuron_to_neuropil_fr
         for i in range(neuron_fr.ndim - 1):
             fun = jax.vmap(fun)
         neuropil_fr = fun(neuron_fr)
         return neuropil_fr
+
+    @property
+    def warmup_data(self):
+        """
+        Get the training portion of the spike rate data.
+
+        Returns:
+            u.Quantity: Training data with shape [n_train, n_neuropil].
+        """
+        return self.spike_rates[:self.n_warmup_data]
 
     @property
     def train_data(self):
@@ -1177,7 +1142,7 @@ class NeuralData:
         Returns:
             u.Quantity: Training data with shape [n_train, n_neuropil].
         """
-        return self.spike_rates[:self.n_train]
+        return self.spike_rates[self.n_warmup_data:self.n_warmup_data + self.n_train]
 
     @property
     def test_data(self):
@@ -1187,34 +1152,51 @@ class NeuralData:
         Returns:
             u.Quantity: Testing data with shape [n_test, n_neuropil].
         """
-        return self.spike_rates[self.n_train:]
+        return self.spike_rates[self.n_warmup_data + self.n_train:]
 
-    def iter_train_data(self, batch_size: int):
+    def iter_warmup_data(self):
+        """
+        Iterate over the warmup portion of the spike rate data.
+
+        This generator yields pairs of input and output firing rates for each time step
+        in the warmup data segment. For each time index in the warmup range, it yields
+        the current and next time step's spike rates, repeated for the number of training
+        steps per data point.
+
+        Yields
+        ------
+        Tuple[u.Quantity, u.Quantity]
+            A tuple containing:
+            - in_: Input spike rates at the current time step.
+            - out_: Output spike rates at the next time step.
+
+        Notes
+        -----
+        The number of iterations per time step is determined by `self.n_train_per_data`.
+        This is useful for initializing or "warming up" the network before main training.
+        """
+        for i in range(self.n_warmup_data):
+            in_, out_ = self.spike_rates[i], self.spike_rates[i + 1]
+            for _ in range(self.n_train_per_data):
+                yield in_, out_
+
+    def iter_train_data(self):
         """
         Iterate over the neural activity training data in batches.
 
         Provides batches of data for training, where each batch contains input firing rates
         and their corresponding target output firing rates for the next time step.
 
-        Args:
-            batch_size (int): The size of each batch.
-
         Yields:
             Tuple[u.Quantity, u.Quantity]: A tuple containing:
                 - input_bin_indices: Input firing rates transformed to embeddings
                 - output_neuropil_fr: Target output firing rates for the next time step
         """
-
-        # firing rate data
-        n = int(self.n_train // batch_size) * batch_size
-        spike_rates = np.asarray(self.train_data / u.Hz)[:n]
-        spike_rates = spike_rates.reshape(batch_size, -1, spike_rates.shape[1])
-
-        for i in range(1, spike_rates.shape[1]):
-            input_neuropil_fr = spike_rates[:, i - 1]
-            output_neuropil_fr = spike_rates[:, i]
-            input_embed = self.neuropil_fr_to_embedding(input_neuropil_fr)
-            yield input_embed, output_neuropil_fr * u.Hz
+        for i in range(self.n_warmup_data, self.n_warmup_data + self.n_train):
+            input_neuropil_fr = self.spike_rates[i]
+            output_neuropil_fr = self.spike_rates[i + 1]
+            for _ in range(self.n_train_per_data):
+                yield input_neuropil_fr, output_neuropil_fr
 
 
 class DrosophilaInputEncoder(brainstate.nn.Module):
@@ -1375,7 +1357,7 @@ class Population(brainstate.nn.Neuron):
         return self.cumulative_fr.value
 
     def reset_firing_rate(self):
-        self.spike_count.value = brainstate.init.param(jnp.zeros, self.varshape)
+        self.spike_count.value = jnp.zeros_like(self.spike_count.value)
 
     def get_refractory(self):
         if self.tau_ref is None:
@@ -1670,8 +1652,6 @@ class DrosophilaSpikingNetwork(brainstate.nn.Module):
 
         # parameters
         self.flywire_version = flywire_version
-        self.sampling_rate = sampling_rate
-        self.n_sample_step = int(1 / sampling_rate / brainstate.environ.get_dt())
 
         # population and network
         self.network = RecurrentNetwork(
@@ -1778,7 +1758,6 @@ class DrosophilaSpikingNetTrainer:
         conn_param_type: type = brainscale.ETraceParam,
         input_param_type: type = brainscale.ETraceParam,
         scale_factor: u.Quantity = 0.01 * u.mV,
-        bin_size: u.Quantity = 0.1 * u.Hz,
         split: float = 0.7,
         fitting_target: str = 'lora',
         batch_size: int = 128,
@@ -1799,7 +1778,9 @@ class DrosophilaSpikingNetTrainer:
             neural_activity_id=neural_activity_id,
             split=split,
             neural_activity_max_fr=max_firing_rate,
-            bin_size=bin_size,
+            batch_size=batch_size,
+            sampling_rate=sampling_rate,
+            duration_per_train=duration_per_train,
         )
 
         # population
@@ -1831,7 +1812,6 @@ class DrosophilaSpikingNetTrainer:
             scale_factor=scale_factor,
             n_rank=n_rank,
             sim_before_train=sim_before_train,
-            bin_size=bin_size,
             split=split,
             fitting_target=fitting_target,
         )
@@ -1840,30 +1820,22 @@ class DrosophilaSpikingNetTrainer:
         # activity tokenizer
         self.tokenizer = ActivityTokenization(max_fr=100 * u.Hz, n_bin=201)
 
-    def _get_loss(self, current_neuropil_fr, target_neuropil_fr):
-        if self.loss_fn == 'mse':
-            loss = braintools.metric.squared_error(current_neuropil_fr, target_neuropil_fr)
-        elif self.loss_fn == 'mae':
-            loss = braintools.metric.absolute_error(current_neuropil_fr, target_neuropil_fr)
-        elif self.loss_fn == 'huber':
-            loss = braintools.metric.huber_loss(current_neuropil_fr, target_neuropil_fr)
-        elif self.loss_fn == 'cosine_distance':
-            loss = braintools.metric.cosine_distance(current_neuropil_fr, target_neuropil_fr)
-        elif self.loss_fn == 'log_cosh':
-            loss = braintools.metric.log_cosh(current_neuropil_fr, target_neuropil_fr)
-        else:
-            raise ValueError(f'Unknown loss function: {self.loss_fn}')
-        return loss
+    def _loss(self, predict_fr, target_bin_indices):
+        lower = self.tokenizer.lowers[target_bin_indices]
+        upper = self.tokenizer.uppers[target_bin_indices]
+        return u.get_mantissa(
+            u.math.mean(u.math.square(u.math.relu(lower - predict_fr)) +
+                        u.math.square(u.math.relu(predict_fr - upper)))
+        )
 
-    def _train_one_duration(self, index, input_bin_indices, target_bin_indices):
-        n_per_train = int(self.duration_per_train / brainstate.environ.get_dt())
-        indices = np.arange(n_per_train)
+    @brainstate.compile.jit(static_argnums=0)
+    def batch_train(self, i_batch, input_bin_indices, target_bin_indices):
+        indices = np.arange(self.data.n_step_per_train) + i_batch * self.data.n_step_per_train
 
         # input_bin_indices: [n_batch, n_neuropil]
         # target_neuropil_fr: [n_batch, n_neuropil]
-        n_batch = input_bin_indices.shape[0]
-        assert n_batch == self.batch_size, f'input batch size {n_batch} != {self.batch_size}'
-        input_bins = self.tokenizer.sample_from_bin_indices(input_bin_indices)
+        input_activities = brainstate.augment.vmap(lambda: self.tokenizer.sample_from_bin_indices(input_bin_indices),
+                                                   axis_size=self.batch_size)()
 
         # model
         if self.etrace_decay is None or self.etrace_decay == 0.:
@@ -1873,29 +1845,27 @@ class DrosophilaSpikingNetTrainer:
 
         @brainstate.augment.vmap_new_states(
             state_tag='etrace',
-            axis_size=n_batch,
+            axis_size=self.batch_size,
             in_states=self.target.states('hidden')
         )
         def init():
-            model.compile_graph(0, input_bins[0])
+            model.compile_graph(0, input_activities[0])
             model.show_graph()
 
         init()
 
         # simulation with eligibility trace recording
-        self.target.pop.reset_firing_rate(n_batch)
+        self.target.pop.reset_firing_rate()
         model = brainstate.nn.Vmap(model, vmap_states=('hidden', 'etrace'), in_axes=(None, 0))
-        brainstate.compile.for_loop(lambda i: model(i + index, input_bins), indices[:-1])
+        brainstate.compile.for_loop(lambda i: model(i, input_activities), indices[:-1])
 
         # training
         def loss_fn():
-            model(indices[-1] + index, input_bins)
-            neuron_fr = self.target.pop.count_firing_rate(self.duration_per_train)
+            model(indices[-1], input_activities)
+            neuron_fr = self.target.pop.count_firing_rate(self.data.duration_per_train)
             predict_neuropil_fr = self.data.count_neuropil_fr(neuron_fr)
             predict_bin_indices = self.tokenizer.to_bin_indices(predict_neuropil_fr)
-            loss_ = braintools.metric.softmax_cross_entropy_with_integer_labels(
-                predict_bin_indices, target_bin_indices
-            ).mean()
+            loss_ = self._loss(predict_neuropil_fr, target_bin_indices).mean()
             acc = jnp.mean(jnp.asarray(target_bin_indices == predict_bin_indices, dtype=jnp.float32))
             return loss_, acc
 
@@ -1909,16 +1879,106 @@ class DrosophilaSpikingNetTrainer:
         return loss, max_g, acc
 
     @brainstate.compile.jit(static_argnums=0)
-    def train(self, index, input_embed, target_neuropil_fr):
-        n_epoch = int(self.target.sampling_rate // self.duration_per_train)
-        n_per_train = int(self.duration_per_train / brainstate.environ.get_dt())
-        losses, max_g, accs = [], [], []
-        for i in range(n_epoch):
-            r = self._train_one_duration(i * n_per_train + index, input_embed, target_neuropil_fr)
-            losses.append(r[0])
-            max_g.append(r[1])
-            accs.append(r[2])
-        return jnp.asarray(losses), jnp.asarray(max_g), jnp.asarray(accs)
+    def predict(self, i_batch, input_bin_indices, target_bin_indices):
+        indices = np.arange(self.data.n_step_per_train) + i_batch * self.data.n_step_per_train
+
+        # input_bin_indices: [n_batch, n_neuropil]
+        # target_neuropil_fr: [n_batch, n_neuropil]
+        input_activities = brainstate.augment.vmap(lambda: self.tokenizer.sample_from_bin_indices(input_bin_indices),
+                                                   axis_size=self.batch_size)()
+
+        # simulation
+        self.target.pop.reset_firing_rate()
+        model = brainstate.nn.Vmap(self.target, vmap_states=('hidden', 'etrace'), in_axes=(None, 0))
+        brainstate.compile.for_loop(lambda i: model(i, input_activities), indices)
+
+        # statistics
+        neuron_fr = self.target.pop.count_firing_rate(self.data.duration_per_train)
+        predict_neuropil_fr = self.data.count_neuropil_fr(neuron_fr)
+        predict_bin_indices = self.tokenizer.to_bin_indices(predict_neuropil_fr)
+        loss = self._loss(predict_neuropil_fr, target_bin_indices).mean()
+        acc = jnp.mean(jnp.asarray(target_bin_indices == predict_bin_indices, dtype=jnp.float32))
+
+        return loss, acc
+
+    def f_train(self, train_epoch: int, checkpoint_path: str = None, settings=None):
+        if checkpoint_path is not None:
+            braintools.file.msgpack_load(checkpoint_path, self.target.states(brainstate.ParamState))
+            filepath = os.path.join(os.path.dirname(checkpoint_path), 'new')
+            os.makedirs(filepath, exist_ok=True)
+        else:
+            filepath = self.filepath
+
+        # training process
+        os.makedirs(filepath, exist_ok=True)
+        with open(f'{filepath}/training-losses.txt', 'w') as file:
+            output(file, str(settings))
+            max_acc = 0.
+            for i_epoch in range(train_epoch):
+                i_batch = 0
+                # warmup
+                for input_neuropil_fr, target_neuropil_fr in self.data.iter_warmup_data():
+                    t0 = time.time()
+                    input_bin_indices = self.tokenizer.to_bin_indices(input_neuropil_fr)
+                    target_bin_indices = self.tokenizer.to_bin_indices(target_neuropil_fr)
+                    loss, acc = jax.block_until_ready(
+                        self.predict(i_batch, input_bin_indices, target_bin_indices)
+                    )
+                    t1 = time.time()
+                    output(
+                        file,
+                        f'epoch = {i_epoch}, '
+                        f'warmup batch = {i_batch}, '
+                        f'loss = {loss:.5f}, '
+                        f'bin acc = {acc:.5f}, '
+                        f'time = {t1 - t0:.5f}s'
+                    )
+                    i_batch += 1
+
+                # training
+                all_loss = []
+                all_acc = []
+                for input_neuropil_fr, target_neuropil_fr in self.data.iter_train_data():
+                    t0 = time.time()
+                    input_bin_indices = self.tokenizer.to_bin_indices(input_neuropil_fr)
+                    target_bin_indices = self.tokenizer.to_bin_indices(target_neuropil_fr)
+                    loss, max_g, acc = jax.block_until_ready(
+                        self.batch_train(i_batch, input_bin_indices, target_bin_indices)
+                    )
+                    t1 = time.time()
+
+                    output(
+                        file,
+                        f'epoch = {i_epoch}, '
+                        f'train batch = {i_batch}, '
+                        f'loss = {loss:.5f}, '
+                        f'bin acc = {acc:.5f}, '
+                        f'lr = {self.opt.lr():.6f}, '
+                        f'time = {t1 - t0:.5f}s'
+                    )
+                    output(file, f'max_g = {max_g}')
+
+                    i_batch += 1
+                    all_loss.append(loss)
+                    all_acc.append(acc)
+                self.opt.lr.step_epoch()
+
+                # save checkpoint
+                loss = np.mean(all_loss)
+                acc = np.mean(all_acc)
+                output(
+                    file,
+                    f'epoch = {i_epoch}, '
+                    f'loss = {loss:.5f}, '
+                    f'bin acc = {acc:.5f}, '
+                    f'lr = {self.opt.lr():.6f}'
+                )
+                if acc > max_acc:
+                    braintools.file.msgpack_save(
+                        f'{filepath}/first-round-checkpoint.msgpack',
+                        self.target.states(brainstate.ParamState),
+                    )
+                    max_acc = acc
 
     def _show_res(
         self,

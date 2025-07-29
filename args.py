@@ -120,7 +120,6 @@ def get_parser(gpu_pre_allocate=0.99):
             lr_round1 = settings['lr_round1']
             lr_round2 = settings['lr_round2']
             connectome_scale_factor = settings['connectome_scale_factor']
-            bin_size = settings['bin_size']
             split = settings['split']
             sim_before_train = settings['sim_before_train']
             loss = settings['loss']
@@ -133,14 +132,12 @@ def get_parser(gpu_pre_allocate=0.99):
         etrace_decay = 0.99
         dt = 0.2
         epoch_round1 = 200
-        epoch_round2 = 200
         flywire_version = '630'
         neural_activity_id = '2017-10-26_1'
         neural_activity_max_fr = 100.
         lr_round1 = 1e-2
         lr_round2 = 1e-3
         connectome_scale_factor = 0.0825 / 100
-        bin_size = 0.5
         split = 0.7
         sim_before_train = 0.1
         loss = 'mse'
@@ -157,20 +154,16 @@ def get_parser(gpu_pre_allocate=0.99):
 
     # training parameters
     parser.add_argument('--dt', type=float, default=dt, help='Control the time step of the simulation.')
-    parser.add_argument('--epoch_round1', type=int, default=epoch_round1,
+    parser.add_argument('--epoch', type=int, default=epoch_round1,
                         help='The number of epochs for spiking network training.')
-    parser.add_argument('--epoch_round2', type=int, default=epoch_round2, help='The number of epochs for rnn training.')
     parser.add_argument('--flywire_version', type=str, default=flywire_version, help='The version of flywire.')
     parser.add_argument('--neural_activity_id', type=str, default=neural_activity_id, help='The id of neural activity.')
     parser.add_argument('--neural_activity_max_fr', type=float, default=neural_activity_max_fr,
                         help='The maximum firing rate of neural activity. [Hz]')
-    parser.add_argument('--lr_round1', type=float, default=lr_round1,
+    parser.add_argument('--lr', type=float, default=lr_round1,
                         help='The learning rate for first-round spiking network training.')
-    parser.add_argument('--lr_round2', type=float, default=lr_round2,
-                        help='The learning rate for second-round rnn training.')
     parser.add_argument('--connectome_scale_factor', type=float, default=connectome_scale_factor,
                         help='The scale factor of connectome. [mV]')
-    parser.add_argument('--bin_size', type=float, default=bin_size, help='The bin size of neural activity. [Hz]')
     parser.add_argument('--split', type=float, default=split, help='The split ratio of training and validation set.')
     parser.add_argument('--sim_before_train', type=float, default=sim_before_train,
                         help='The fraction of simulation time before training.')
