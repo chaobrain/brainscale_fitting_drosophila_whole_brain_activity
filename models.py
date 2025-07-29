@@ -1215,44 +1215,6 @@ class NeuralData:
             yield inputs, targets
 
 
-class DrosophilaInputEncoder(brainstate.nn.Module):
-    """
-    Neural network encoder for processing and transforming Drosophila neural activity data.
-
-    This module implements a recurrent neural network architecture for encoding
-    time-series neural activity data in the Drosophila brain. It processes input firing
-    rates through normalization, a GRU cell for temporal context, and a linear readout
-    layer to produce output firing rates.
-
-    The encoder is designed to be used in the second round of training after the spiking
-    neural network has been trained, serving as a decoder/predictor of neural activity
-    patterns.
-
-    Parameters
-    ----------
-    n_in : int
-        Number of input features (typically number of neuropils in the dataset)
-    n_hidden : int
-        Size of the hidden state in the GRU cell
-
-    Attributes
-    ----------
-    norm : brainstate.nn.LayerNorm
-        Layer normalization module for input standardization
-    rnn : brainstate.nn.GRUCell
-        Gated Recurrent Unit cell for processing sequential data
-    """
-
-    def __init__(self, n_in: int, n_hidden: int):
-        super().__init__()
-        self.norm = brainstate.nn.LayerNorm(n_in, use_scale=False, use_bias=False)
-        self.rnn = brainstate.nn.GRUCell(n_in, n_hidden)
-
-    def update(self, x):
-        norm = self.norm(u.get_mantissa(x))
-        return self.rnn(norm)
-
-
 class Population(brainstate.nn.Neuron):
     """
     A population of neurons with leaky integrate-and-fire dynamics.
@@ -1864,9 +1826,9 @@ class DrosophilaSpikingNetTrainer:
 
         # model
         if self.etrace_decay is None or self.etrace_decay == 0.:
-            model = brainscale.ParamDimVjpAlgorithm(self.target, vjp_method=self.vjp_method)
+            model_and_etrace = brainscale.ParamDimVjpAlgorithm(self.target, vjp_method=self.vjp_method)
         else:
-            model = brainscale.IODimVjpAlgorithm(self.target, self.etrace_decay, vjp_method=self.vjp_method)
+            model_and_etrace = brainscale.IODimVjpAlgorithm(self.target, self.etrace_decay, vjp_method=self.vjp_method)
 
         @brainstate.augment.vmap_new_states(
             state_tag='etrace',
@@ -1874,15 +1836,15 @@ class DrosophilaSpikingNetTrainer:
             in_states=self.target.states('hidden')
         )
         def init():
-            model.compile_graph(0, jnp.zeros(input_bin_indices.shape[1:], dtype=dftype))
-            model.show_graph()
+            model_and_etrace.compile_graph(0, jnp.zeros(input_bin_indices.shape[1:], dtype=dftype))
+            model_and_etrace.show_graph()
 
         init()
-        model = brainstate.nn.Vmap(model, vmap_states=('hidden', 'etrace'), in_axes=(None, 0))
+        model_and_etrace = brainstate.nn.Vmap(model_and_etrace, vmap_states=('hidden', 'etrace'), in_axes=(None, 0))
 
         grads = jax.tree.map(lambda x: jnp.zeros_like(x), self.trainable_weights.to_dict_values())
         grads, (loss, acc) = brainstate.transform.scan(
-            functools.partial(self._comp_grads, model),
+            functools.partial(self._comp_grads, model_and_etrace),
             grads,
             (np.arange(input_bin_indices.shape[0]) + i_batch, input_bin_indices, target_bin_indices),
         )
