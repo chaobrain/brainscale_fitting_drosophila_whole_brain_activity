@@ -20,7 +20,7 @@ import os.path
 import platform
 import re
 
-if platform.system() != 'Windows':
+if platform.system() == 'Linux':
     import matplotlib
 
     matplotlib.use('Agg')
@@ -150,7 +150,7 @@ def dtw_distance(x: jax.Array, y: jax.Array) -> jax.Array:
 def _visualize_low_rank_connectivity(filepath: str):
     params = braintools.file.msgpack_load(os.path.join(filepath, 'first-round-checkpoint.msgpack'))
 
-    lora = params['interaction']['lora']['weight_op']
+    lora = params['network']['lora']['weight_op']
     B = lora['B']
     A = lora['A']['mantissa']
 
@@ -1241,7 +1241,7 @@ class WeightAnalysis:
         self.filepath = filepath
 
         params = braintools.file.msgpack_load(os.path.join(filepath, 'first-round-checkpoint.msgpack'))
-        lora = params['interaction']['lora']['weight_op']
+        lora = params['network']['lora']['weight_op']
         B = lora['B']
         A = lora['A']['mantissa']
         self.weights = B @ A
