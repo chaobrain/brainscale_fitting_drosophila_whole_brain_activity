@@ -40,8 +40,8 @@ def _set_gpu_preallocation(mode: float):
         >>> _set_gpu_preallocation(0.5)  # Allocate 50% of GPU memory
     """
     assert isinstance(mode, float) and 0. <= mode < 1., f'GPU memory preallocation must be in [0., 1.]. But got {mode}.'
-    # os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = str(mode)
-    os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = str(mode)
+    # os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 
 
 def _set_gpu_device(device_ids):

@@ -37,7 +37,7 @@ from scipy.cluster.hierarchy import dendrogram, linkage
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
-from utils import FilePath, split_train_test, read_setting
+from models import FilePath, split_train_test, read_setting
 
 
 def pearson_corr(x: jax.Array, y: jax.Array) -> jax.Array:

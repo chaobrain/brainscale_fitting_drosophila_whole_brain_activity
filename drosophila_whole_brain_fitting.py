@@ -87,7 +87,7 @@ import brainstate
 import brainscale
 import brainunit as u
 
-from utils import DrosophilaSpikingNetTrainer
+from models import DrosophilaSpikingNetTrainer
 
 brainstate.environ.set(dt=settings.dt * u.ms)
 

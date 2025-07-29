@@ -27,7 +27,7 @@ import jax
 import numpy as np
 
 from drosophila_activity_analysis import _visualize_firing_rates, pearson_corr
-from utils import DrosophilaRestingStateModel, FilePath, split_train_test, read_setting
+from models import DrosophilaRestingStateModel, FilePath, split_train_test, read_setting
 
 brainstate.environ.set(dt=0.2 * u.ms)
 
