@@ -25,7 +25,7 @@ import pandas as pd
 import seaborn as sns
 from joblib import Parallel, delayed
 
-from utils import (
+from models import (
     deconvolve_dff_to_spikes,
     filter_region_response,
     trim_region_response,

@@ -241,3 +241,5 @@ cython_debug/
 /version2/
 /version3/
 /bash_files/
+/dev/
+/drosophila_activity_prediction.py
