@@ -1168,7 +1168,9 @@ class NeuralData:
 
         inputs, targets = [], []
         for i in range(
-            0, self.n_train - self.n_warmup_per_train - self.n_target_per_train, self.n_gap_per_train
+            0,
+            self.n_train - self.n_warmup_per_train - self.n_target_per_train,
+            self.n_gap_per_train
         ):
             i1 = i + self.n_warmup_per_train
             i2 = i1 + self.n_target_per_train
