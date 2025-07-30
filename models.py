@@ -996,13 +996,13 @@ class NeuralData:
         neural_activity_id: str,
         split: float = 0.5,
         neural_activity_max_fr: u.Quantity = 120 * u.Hz,
-        duration_per_data: u.Quantity = 100.0 * u.ms,
+        duration_per_data: u.Quantity = 20.0 * u.ms,
         duration_per_grad: u.Quantity = 20.0 * u.ms,
         n_warmup_per_train: int = 10,
         n_target_per_train: int = 90,
         n_gap_per_train: int = 10,
         interpolation: str = 'linear',
-        noise_sigma: float = 0.1
+        noise_sigma: float = 0.
     ):
         # neural activity data
         self.neural_activity_id = neural_activity_id
@@ -1762,12 +1762,15 @@ class DrosophilaSpikingNetTrainer:
         self.filepath = f"{args.to_filepath()}#{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
 
     def _loss(self, predict_fr, target_fr):
-        lowers = target_fr * (1 - self.data.noise_sigma)
-        uppers = target_fr * (1 + self.data.noise_sigma)
-        return u.get_mantissa(
-            u.math.mean(u.math.square(u.math.relu(lowers - predict_fr)) +
-                        u.math.square(u.math.relu(predict_fr - uppers)))
-        )
+        if self.data.noise_sigma > 0.:
+            lowers = target_fr * (1 - self.data.noise_sigma)
+            uppers = target_fr * (1 + self.data.noise_sigma)
+            return u.get_mantissa(
+                u.math.mean(u.math.square(u.math.relu(lowers - predict_fr)) +
+                            u.math.square(u.math.relu(predict_fr - uppers)))
+            )
+        else:
+            return u.get_mantissa(u.math.abs(predict_fr - target_fr).mean())
 
     def _comp_grads(self, model, carry, inputs):
         grads, prediction = carry
