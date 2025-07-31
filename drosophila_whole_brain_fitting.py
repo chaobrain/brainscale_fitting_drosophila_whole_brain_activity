@@ -137,7 +137,11 @@ def training():
         split=settings.split,
         fitting_target=settings.fitting_target,
     )
-    trainer.f_train(train_epoch=settings.epoch, settings=settings)
+    checkpoint_path = ('./results/630#2017-10-26_1#100.0#0.99#mse#ETraceParam#'
+                       'ETraceParam#0.000825#20#0.1#0.7#csr##2025-07-30-18-36-14/'
+                       'checkpoint-best-loss=45.5167.msgpack')
+    checkpoint_path = None
+    trainer.f_train(train_epoch=settings.epoch, checkpoint_path=checkpoint_path, settings=settings)
 
 
 if __name__ == '__main__':

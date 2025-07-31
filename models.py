@@ -1324,15 +1324,13 @@ class Population(brainstate.nn.Neuron):
         self.v = brainscale.ETraceState(brainstate.init.param(self.V_init, self.varshape))
         self.g = brainscale.ETraceState(brainstate.init.param(self.g_init, self.varshape))
         self.spike_count = brainscale.ETraceState(jnp.zeros(self.varshape))
-        self.cumulative_fr = brainstate.HiddenState(jnp.zeros(self.varshape, dtype=dftype) * u.Hz)
         if self.tau_ref is not None:
             self.t_ref = brainstate.HiddenState(
                 brainstate.init.param(brainstate.init.Constant(-1e7 * u.ms), self.varshape)
             )
 
     def count_firing_rate(self, duration: u.Quantity[u.ms]):
-        self.cumulative_fr.value = 0.9 * self.cumulative_fr.value + self.spike_count.value / duration.to(u.second)
-        return self.cumulative_fr.value
+        return self.spike_count.value / duration.to(u.second)
 
     def reset_firing_rate(self):
         self.spike_count.value = jnp.zeros_like(self.spike_count.value)
@@ -1565,7 +1563,7 @@ class Input2CurrentEncoder(brainstate.nn.Module):
                 self.pop.varshape,
                 w_init=brainstate.init.KaimingNormal(unit=u.mV),
                 b_init=brainstate.init.ZeroInit(unit=u.mV),
-                param_type=param_type
+                param_type=brainscale.NonTempParam
             ),
             brainscale.nn.ReLU()
         )
@@ -1894,6 +1892,7 @@ class DrosophilaSpikingNetTrainer:
         if checkpoint_path is not None:
             braintools.file.msgpack_load(checkpoint_path, self.target.states(brainstate.ParamState))
             filepath = os.path.join(os.path.dirname(checkpoint_path), 'new')
+            filepath = self.filepath
             os.makedirs(filepath, exist_ok=True)
         else:
             filepath = self.filepath
